@@ -465,12 +465,12 @@ function renderAlertDispatches(dispatches) {
     item.innerHTML = `
       <div class="dispatch-info">
         <strong>To: ${safeName} (${safePhone})</strong>
-        <small>${d.gateway_sent ? '⚡ Automated SMS Dispatched' : 'Cellular SMS Ready · 1-Tap to Send'}</small>
+        <small style="color:#25D366;font-weight:600;">💬 WhatsApp Distress Ready · 1-Tap to Send</small>
       </div>
       <div class="dispatch-links">
-        <a href="${smsLink}" class="dispatch-btn sms-btn">✉️ Send SMS</a>
+        <a href="${safeWaUrl}" target="_blank" class="dispatch-btn wa-btn" style="background:#25D366;color:#ffffff;font-weight:700;display:inline-flex;align-items:center;gap:6px;border:none;">💬 Send WhatsApp</a>
         <a href="${safeCallUrl}" class="dispatch-btn call-btn">📞 Call</a>
-        <a href="${safeWaUrl}" target="_blank" class="dispatch-btn wa-subtle-btn" title="Send via WhatsApp">💬</a>
+        <a href="${smsLink}" class="dispatch-btn sms-btn" title="Send SMS Backup">✉️ SMS</a>
       </div>
     `;
     alertDispatchList.appendChild(item);
@@ -479,6 +479,12 @@ function renderAlertDispatches(dispatches) {
 
 function activateEmergencyUI(data = {}, isSilent = false) {
   isEmergencyActive = true;
+  // Automatically open first contact's WhatsApp in new tab for instant dispatch
+  if (data && data.dispatches && data.dispatches.length > 0 && data.dispatches[0].whatsapp_url) {
+    try {
+      window.open(data.dispatches[0].whatsapp_url, '_blank');
+    } catch (_) {}
+  }
   document.body.classList.add("emergency-active");
   document.body.dataset.status = "ACTIVE";
 
@@ -1108,7 +1114,7 @@ contactForm.addEventListener("submit", async e => {
         <small>${safePhone}</small>
       </div>
       <div class="contact-actions">
-        <a href="sms:${encodeURIComponent(res.phone)}?body=Hello%20${encodeURIComponent(res.name)},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." class="action-btn sms-action" title="Send SMS to ${safeName}">✉️</a>
+        <a href="https://api.whatsapp.com/send?phone=${encodeURIComponent(res.phone.replace(/\D/g, ''))}&text=Hello%20${encodeURIComponent(res.name)},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." target="_blank" class="action-btn wa-action" title="WhatsApp ${safeName}" style="color:#25D366;">💬</a>
         <a href="tel:${encodeURIComponent(res.phone)}" class="action-btn call-action" title="Call ${safeName}">📞</a>
         <button class="remove" aria-label="Remove ${safeName}" title="Delete Contact">×</button>
       </div>

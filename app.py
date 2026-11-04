@@ -37,20 +37,25 @@ class VercelPathMiddleware:
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
-        real_path = (
-            environ.get('HTTP_X_MATCHED_PATH') or
-            environ.get('HTTP_X_FORWARDED_URI') or
-            environ.get('REQUEST_URI') or
-            environ.get('RAW_URI')
-        )
-        if real_path and real_path.startswith('/'):
-            path = real_path.split('?')[0]
-            if path and path not in ('/api/index', '/api', '/api/index/'):
-                environ['PATH_INFO'] = path
-            elif path in ('/api/index', '/api', '/api/index/'):
+        qs = urllib.parse.parse_qs(environ.get('QUERY_STRING', ''), keep_blank_values=True)
+        if '__path' in qs:
+            path_arg = qs.get('__path', [''])[0]
+            environ['PATH_INFO'] = ('/' + path_arg.lstrip('/')) if path_arg else '/'
+        else:
+            real_path = (
+                environ.get('HTTP_X_MATCHED_PATH') or
+                environ.get('HTTP_X_FORWARDED_URI') or
+                environ.get('REQUEST_URI') or
+                environ.get('RAW_URI')
+            )
+            if real_path and real_path.startswith('/'):
+                path = real_path.split('?')[0]
+                if path and path not in ('/api/index', '/api', '/api/index/'):
+                    environ['PATH_INFO'] = path
+                elif path in ('/api/index', '/api', '/api/index/'):
+                    environ['PATH_INFO'] = '/'
+            elif environ.get('PATH_INFO') in ('/api/index', '/api', '/api/index/'):
                 environ['PATH_INFO'] = '/'
-        elif environ.get('PATH_INFO') in ('/api/index', '/api', '/api/index/'):
-            environ['PATH_INFO'] = '/'
         return self.wsgi_app(environ, start_response)
 
 app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
@@ -389,24 +394,22 @@ def start_sos():
     log_rows = []
     for contact in contacts:
         c_phone = clean_phone(contact["phone"])
-        dial_phone = c_phone if c_phone.startswith("+") else ("91" + c_phone.lstrip("0") if len(c_phone) == 10 else c_phone)
+        digits = re.sub(r"\D", "", c_phone)
+        dial_phone = ("91" + digits) if len(digits) == 10 else digits
         
-        # Check server-side automated SMS dispatch (outside of DB lock)
-        gateway_status = send_gateway_sms(c_phone, alert_msg)
-        
-        sms_url = f"sms:{c_phone}?body={encoded_msg}"
+        # WhatsApp primary URL (works on both mobile app and web.whatsapp.com)
         wa_url = f"https://api.whatsapp.com/send?phone={dial_phone}&text={encoded_msg}"
-        log_status = f"SENT ({gateway_status['provider']})" if gateway_status["sent"] else "READY (Native SMS)"
+        sms_url = f"sms:{c_phone}?body={encoded_msg}"
         
-        log_rows.append((emergency_id, contact["name"], contact["phone"], alert_msg, "SMS (Cellular)", log_status, now_local))
+        log_rows.append((emergency_id, contact["name"], contact["phone"], alert_msg, "WhatsApp", "READY (1-Tap WhatsApp)", now_local))
         dispatches.append({
             "name": contact["name"],
             "phone": contact["phone"],
-            "sms_url": sms_url,
             "whatsapp_url": wa_url,
+            "sms_url": sms_url,
             "call_url": f"tel:{contact['phone']}",
             "sms_body": alert_msg,
-            "gateway_sent": gateway_status["sent"]
+            "gateway_sent": False
         })
 
     # 3. Fast batch insert of logs in a quick secondary transaction

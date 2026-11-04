@@ -116,6 +116,7 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertEqual(sos_data["status"], "ACTIVE")
         self.assertEqual(len(sos_data["dispatches"]), 1)
         self.assertIn("sms:9876543210", sos_data["dispatches"][0]["sms_url"])
+        self.assertIn("whatsapp.com", sos_data["dispatches"][0]["whatsapp_url"])
 
         # 2. Check /api/status returns ACTIVE
         status_resp = self.client.get("/api/status")
