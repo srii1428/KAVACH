@@ -30,6 +30,14 @@ app = Flask(
     template_folder=str(tmpl_dir),
     static_folder=None
 )
+app.url_map.strict_slashes = False
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    return response
 
 def find_static_asset(filename):
     search_dirs = [
@@ -222,10 +230,7 @@ def send_gateway_sms(to_phone, message):
     return {"sent": False, "provider": "Native SMS"}
 
 @app.route("/")
-@app.route("/api")
-@app.route("/api/")
 @app.route("/api/index")
-@app.route("/api/index/")
 @app.route("/index.html")
 def home():
     with db() as conn:
@@ -281,12 +286,22 @@ def delete_contact(contact_id):
         conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
     return jsonify(ok=True)
 
-@app.post("/api/sos")
+@app.route("/api/sos", methods=["GET", "POST", "OPTIONS"])
 def start_sos():
-    data = request.get_json(silent=True) or {}
-    lat, lon = validate_coordinates(data.get("latitude"), data.get("longitude"))
-    trigger_type = data.get("trigger_type", "MANUAL")
-    is_silent = 1 if data.get("is_silent") else 0
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
+
+    if request.method == "GET":
+        lat_raw = request.args.get("latitude")
+        lon_raw = request.args.get("longitude")
+        trigger_type = request.args.get("trigger_type", "MANUAL")
+        is_silent = 1 if request.args.get("is_silent") in ("1", "true", "True") else 0
+        lat, lon = validate_coordinates(lat_raw, lon_raw)
+    else:
+        data = request.get_json(silent=True) or {}
+        lat, lon = validate_coordinates(data.get("latitude"), data.get("longitude"))
+        trigger_type = data.get("trigger_type", "MANUAL")
+        is_silent = 1 if data.get("is_silent") else 0
     now_utc = datetime.now(timezone.utc).isoformat()
     now_local = datetime.now().isoformat()
     
@@ -363,8 +378,10 @@ def start_sos():
         alert_text=alert_msg
     )
 
-@app.post("/api/location")
+@app.route("/api/location", methods=["POST", "OPTIONS"])
 def update_location():
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
     data = request.get_json(silent=True) or {}
     lat, lon = validate_coordinates(data.get("latitude"), data.get("longitude"))
     if lat is None or lon is None:
@@ -382,8 +399,10 @@ def update_location():
         """, (lat, lon, now, active["id"]))
     return jsonify(ok=True, updated_at=now, latitude=lat, longitude=lon)
 
-@app.route("/api/stop", methods=["GET", "POST"])
+@app.route("/api/stop", methods=["GET", "POST", "OPTIONS"])
 def stop_sos():
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
     try:
         now_utc = datetime.now(timezone.utc).isoformat()
         with db() as conn:
@@ -393,8 +412,10 @@ def stop_sos():
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
-@app.get("/api/status")
+@app.route("/api/status", methods=["GET", "OPTIONS"])
 def status():
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
     with db() as conn:
         active_em = conn.execute("SELECT * FROM emergencies WHERE status='ACTIVE' ORDER BY id DESC LIMIT 1").fetchone()
         latest = active_em if active_em else conn.execute("SELECT * FROM emergencies ORDER BY id DESC LIMIT 1").fetchone()

@@ -87,7 +87,11 @@ class KavachApiTestCase(unittest.TestCase):
         # Add trusted contact first
         self.client.post("/api/contacts", json={"name": "Mom", "phone": "9876543210"})
 
-        # 1. Trigger SOS
+        # 0. Test OPTIONS preflight request (CORS)
+        opt_resp = self.client.open("/api/sos", method="OPTIONS")
+        self.assertEqual(opt_resp.status_code, 200)
+
+        # 1. Trigger SOS via POST
         sos_resp = self.client.post("/api/sos", json={
             "latitude": 12.9716,
             "longitude": 77.5946,
@@ -95,6 +99,10 @@ class KavachApiTestCase(unittest.TestCase):
             "is_silent": False
         })
         self.assertEqual(sos_resp.status_code, 200)
+
+        # 1b. Test GET /api/sos fallback also works with 200 OK
+        get_sos_resp = self.client.get("/api/sos?latitude=12.9716&longitude=77.5946")
+        self.assertEqual(get_sos_resp.status_code, 200)
         sos_data = sos_resp.get_json()
         self.assertTrue(sos_data["ok"])
         self.assertEqual(sos_data["status"], "ACTIVE")
@@ -165,7 +173,7 @@ class KavachApiTestCase(unittest.TestCase):
 
     def test_static_assets_and_page_render(self):
         # 1. Test index page renders with embedded stylesheet across all aliases
-        for path in ["/", "/api", "/api/index", "/index.html"]:
+        for path in ["/", "/api/index", "/index.html"]:
             resp = self.client.get(path)
             self.assertEqual(resp.status_code, 200, f"Failed on path {path}")
             self.assertIn("KAVACH", resp.get_data(as_text=True))

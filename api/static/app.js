@@ -563,8 +563,25 @@ async function triggerSOS(triggerType = "MANUAL", isSilent = false) {
       is_silent: isSilent
     };
 
-    const res = await postJSON("/api/sos", payload);
-    activateEmergencyUI(res, isSilent);
+    try {
+      const res = await postJSON("/api/sos", payload);
+      activateEmergencyUI(res, isSilent);
+    } catch (primaryErr) {
+      console.warn("Primary /api/sos failed, attempting fallback:", primaryErr);
+      const q = new URLSearchParams({
+        latitude: payload.latitude !== null && payload.latitude !== undefined ? payload.latitude : "",
+        longitude: payload.longitude !== null && payload.longitude !== undefined ? payload.longitude : "",
+        trigger_type: payload.trigger_type || "MANUAL",
+        is_silent: payload.is_silent ? "1" : "0"
+      });
+      const getRes = await fetch(`/api/sos?${q.toString()}`, { method: "GET" });
+      if (getRes.ok) {
+        const data = await getRes.json();
+        activateEmergencyUI(data, isSilent);
+      } else {
+        throw primaryErr;
+      }
+    }
   } catch (err) {
     feedback.textContent = "Error triggering SOS: " + err.message;
   }
