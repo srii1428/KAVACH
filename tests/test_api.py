@@ -164,7 +164,11 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertEqual(incidents[0]["status"], "CLOSED")
 
     def test_static_assets_and_page_render(self):
-        # 1. Test index page renders with embedded stylesheet
+        # 1. Test index page renders with embedded stylesheet across all aliases
+        for path in ["/", "/api", "/api/index", "/index.html"]:
+            resp = self.client.get(path)
+            self.assertEqual(resp.status_code, 200, f"Failed on path {path}")
+            self.assertIn("KAVACH", resp.get_data(as_text=True))
         index_resp = self.client.get("/")
         self.assertEqual(index_resp.status_code, 200)
         html = index_resp.get_data(as_text=True)

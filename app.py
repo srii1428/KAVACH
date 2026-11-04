@@ -222,6 +222,11 @@ def send_gateway_sms(to_phone, message):
     return {"sent": False, "provider": "Native SMS"}
 
 @app.route("/")
+@app.route("/api")
+@app.route("/api/")
+@app.route("/api/index")
+@app.route("/api/index/")
+@app.route("/index.html")
 def home():
     with db() as conn:
         contacts = [dict(c) for c in conn.execute("SELECT * FROM contacts ORDER BY id DESC").fetchall()]
