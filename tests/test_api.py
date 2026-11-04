@@ -163,5 +163,37 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(incidents), 1)
         self.assertEqual(incidents[0]["status"], "CLOSED")
 
+    def test_static_assets_and_page_render(self):
+        # 1. Test index page renders with embedded stylesheet
+        index_resp = self.client.get("/")
+        self.assertEqual(index_resp.status_code, 200)
+        html = index_resp.get_data(as_text=True)
+        self.assertIn("KAVACH", html)
+        self.assertIn("Embedded KAVACH Critical Stylesheet", html)
+        self.assertIn("kavach-brand-shield", html)
+
+        # 2. Test static assets resolve with 200 OK and proper content types
+        css_resp = self.client.get("/static/style.css")
+        self.assertEqual(css_resp.status_code, 200)
+        self.assertIn("text/css", css_resp.content_type)
+        self.assertGreater(len(css_resp.data), 1000)
+
+        js_resp = self.client.get("/static/app.js")
+        self.assertEqual(js_resp.status_code, 200)
+        self.assertIn("javascript", js_resp.content_type)
+        self.assertGreater(len(js_resp.data), 1000)
+
+        logo_resp = self.client.get("/static/kavach-logo.png")
+        self.assertEqual(logo_resp.status_code, 200)
+        self.assertEqual(logo_resp.content_type, "image/png")
+        self.assertGreater(len(logo_resp.data), 1000)
+
+        # 3. Test root aliases
+        root_css = self.client.get("/style.css")
+        self.assertEqual(root_css.status_code, 200)
+        root_js = self.client.get("/app.js")
+        self.assertEqual(root_js.status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

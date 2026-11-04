@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -14,24 +14,66 @@ import contextlib
 
 BASE_DIR = Path(__file__).resolve().parent
 
-if (BASE_DIR / "templates").exists():
-    tmpl_dir = BASE_DIR / "templates"
-    static_dir = BASE_DIR / "static"
-elif (BASE_DIR / "api" / "templates").exists():
-    tmpl_dir = BASE_DIR / "api" / "templates"
-    static_dir = BASE_DIR / "api" / "static"
-elif (BASE_DIR.parent / "templates").exists():
-    tmpl_dir = BASE_DIR.parent / "templates"
-    static_dir = BASE_DIR.parent / "static"
-else:
-    tmpl_dir = Path("templates").resolve()
-    static_dir = Path("static").resolve()
+template_search = [
+    BASE_DIR / "templates",
+    BASE_DIR / "api" / "templates",
+    BASE_DIR.parent / "templates",
+    Path.cwd() / "templates",
+    Path.cwd() / "api" / "templates",
+    Path("/var/task/templates"),
+    Path("/var/task/api/templates")
+]
+tmpl_dir = next((p for p in template_search if (p / "index.html").is_file()), BASE_DIR / "templates")
 
 app = Flask(
     __name__,
     template_folder=str(tmpl_dir),
-    static_folder=str(static_dir)
+    static_folder=None
 )
+
+def find_static_asset(filename):
+    search_dirs = [
+        BASE_DIR / "static",
+        BASE_DIR / "public" / "static",
+        BASE_DIR / "public",
+        BASE_DIR / "api" / "static",
+        BASE_DIR.parent / "static",
+        BASE_DIR.parent / "public" / "static",
+        BASE_DIR.parent / "public",
+        Path.cwd() / "static",
+        Path.cwd() / "public" / "static",
+        Path.cwd() / "public",
+        Path("/var/task/static"),
+        Path("/var/task/public/static"),
+        Path("/var/task/public"),
+        Path("/var/task/api/static")
+    ]
+    for d in search_dirs:
+        target = d / filename
+        if target.is_file():
+            return d, filename
+    return None, None
+
+@app.route('/static/<path:filename>', endpoint='static')
+@app.route('/public/static/<path:filename>')
+@app.route('/public/<path:filename>')
+def serve_static(filename):
+    s_dir, f_name = find_static_asset(filename)
+    if s_dir and f_name:
+        return send_from_directory(str(s_dir), f_name)
+    return f"Static asset {filename} not found", 404
+
+@app.route('/style.css')
+def serve_root_style():
+    return serve_static('style.css')
+
+@app.route('/app.js')
+def serve_root_js():
+    return serve_static('app.js')
+
+@app.route('/kavach-logo.png')
+def serve_root_logo():
+    return serve_static('kavach-logo.png')
 
 if os.getenv("VERCEL"):
     DB_PATH = Path("/tmp/kavach.db")
