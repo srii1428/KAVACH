@@ -103,6 +103,14 @@ class KavachApiTestCase(unittest.TestCase):
         # 1b. Test GET /api/sos fallback also works with 200 OK
         get_sos_resp = self.client.get("/api/sos?latitude=12.9716&longitude=77.5946")
         self.assertEqual(get_sos_resp.status_code, 200)
+
+        # 1c. Test Vercel rewritten route (hit /api/index with x-matched-path header)
+        rewritten_sos = self.client.post("/api/index", headers={"x-matched-path": "/api/sos"}, json={
+            "latitude": 12.9716,
+            "longitude": 77.5946
+        })
+        self.assertEqual(rewritten_sos.status_code, 200)
+        self.assertTrue(rewritten_sos.is_json)
         sos_data = sos_resp.get_json()
         self.assertTrue(sos_data["ok"])
         self.assertEqual(sos_data["status"], "ACTIVE")

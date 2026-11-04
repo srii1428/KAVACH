@@ -32,6 +32,29 @@ app = Flask(
 )
 app.url_map.strict_slashes = False
 
+class VercelPathMiddleware:
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        real_path = (
+            environ.get('HTTP_X_MATCHED_PATH') or
+            environ.get('HTTP_X_FORWARDED_URI') or
+            environ.get('REQUEST_URI') or
+            environ.get('RAW_URI')
+        )
+        if real_path and real_path.startswith('/'):
+            path = real_path.split('?')[0]
+            if path and path not in ('/api/index', '/api', '/api/index/'):
+                environ['PATH_INFO'] = path
+            elif path in ('/api/index', '/api', '/api/index/'):
+                environ['PATH_INFO'] = '/'
+        elif environ.get('PATH_INFO') in ('/api/index', '/api', '/api/index/'):
+            environ['PATH_INFO'] = '/'
+        return self.wsgi_app(environ, start_response)
+
+app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
+
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -230,7 +253,6 @@ def send_gateway_sms(to_phone, message):
     return {"sent": False, "provider": "Native SMS"}
 
 @app.route("/")
-@app.route("/api/index")
 @app.route("/index.html")
 def home():
     with db() as conn:

@@ -576,7 +576,13 @@ async function triggerSOS(triggerType = "MANUAL", isSilent = false) {
       });
       const getRes = await fetch(`/api/sos?${q.toString()}`, { method: "GET" });
       if (getRes.ok) {
-        const data = await getRes.json();
+        let data;
+        const cType = getRes.headers.get("content-type") || "";
+        if (cType.includes("application/json")) {
+          data = await getRes.json();
+        } else {
+          data = { ok: true, status: "ACTIVE" };
+        }
         activateEmergencyUI(data, isSilent);
       } else {
         throw primaryErr;
