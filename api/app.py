@@ -282,31 +282,61 @@ def home():
         active_timer=timer_dict
     )
 
-@app.get("/api/contacts")
-def get_contacts():
-    with db() as conn:
-        rows = conn.execute("SELECT * FROM contacts ORDER BY id DESC").fetchall()
-    return jsonify([dict(row) for row in rows])
+@app.route("/api/contacts", methods=["GET", "POST", "OPTIONS"])
+def handle_contacts():
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
 
-@app.post("/api/contacts")
-def add_contact():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    phone = clean_phone(data.get("phone"))
-    if not name or not phone:
-        return jsonify(ok=False, error="Enter both a valid name and phone number."), 400
-    with db() as conn:
-        cur = conn.execute(
-            "INSERT INTO contacts(name, phone) VALUES (?, ?)", (name, phone)
-        )
-        contact_id = cur.lastrowid
-    return jsonify(ok=True, id=contact_id, name=name, phone=phone)
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form.to_dict() or {}
+        name = (data.get("name") or "").strip()
+        phone = clean_phone(data.get("phone"))
+        if not name or not phone:
+            return jsonify(ok=False, error="Please enter a valid name and phone number (at least 5 digits)."), 400
+        try:
+            with db() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS contacts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        phone TEXT NOT NULL,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur = conn.execute(
+                    "INSERT INTO contacts(name, phone) VALUES (?, ?)", (name, phone)
+                )
+                contact_id = cur.lastrowid
+            return jsonify(ok=True, id=contact_id, name=name, phone=phone)
+        except Exception as e:
+            return jsonify(ok=False, error=str(e)), 500
 
-@app.delete("/api/contacts/<int:contact_id>")
+    # GET
+    try:
+        with db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            rows = conn.execute("SELECT * FROM contacts ORDER BY id DESC").fetchall()
+        return jsonify([dict(row) for row in rows])
+    except Exception as e:
+        return jsonify([])
+
+@app.route("/api/contacts/<int:contact_id>", methods=["DELETE", "POST", "OPTIONS"])
 def delete_contact(contact_id):
-    with db() as conn:
-        conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
-    return jsonify(ok=True)
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
+    try:
+        with db() as conn:
+            conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
 
 @app.route("/api/sos", methods=["GET", "POST", "OPTIONS"])
 def start_sos():

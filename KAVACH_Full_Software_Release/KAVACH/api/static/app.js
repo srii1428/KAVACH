@@ -1075,8 +1075,20 @@ contactForm.addEventListener("submit", async e => {
   e.preventDefault();
   const nameInput = document.getElementById("contactName");
   const phoneInput = document.getElementById("contactPhone");
+  const submitBtn = contactForm.querySelector("button[type='submit']");
+  const origBtnText = submitBtn ? submitBtn.textContent : "+ Add Contact";
   const name = nameInput.value.trim();
   const phone = phoneInput.value.trim();
+
+  if (!name || !phone) {
+    alert("Please provide both a contact name and mobile number.");
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving...";
+  }
 
   try {
     const res = await postJSON("/api/contacts", { name, phone });
@@ -1108,7 +1120,14 @@ contactForm.addEventListener("submit", async e => {
     phoneInput.value = "";
     feedback.textContent = `Saved trusted contact "${res.name}".`;
   } catch (err) {
+    console.error("Add contact error:", err);
     feedback.textContent = "Could not add contact: " + err.message;
+    alert("Could not add contact: " + err.message);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = origBtnText;
+    }
   }
 });
 
