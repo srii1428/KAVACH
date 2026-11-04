@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#4b104f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>KAVACH | Women's Safety Software Platform</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+</head>
+<body data-status="{{ 'ACTIVE' if latest and latest.status == 'ACTIVE' else 'SAFE' }}"
+      data-lat="{{ latest.latitude if latest and latest.latitude else '' }}"
+      data-lon="{{ latest.longitude if latest and latest.longitude else '' }}"
+      class="{{ 'emergency-active' if latest and latest.status == 'ACTIVE' else '' }}">
+
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='kavach-logo.png') }}" alt="KAVACH Logo">
+      <div>
+        <strong>KAVACH</strong>
+        <span>WOMEN SAFETY PLATFORM · SOFTWARE EDITION</span>
+      </div>
+    </div>
+    
+    <nav class="nav-tabs" id="navTabs">
+      <button class="nav-tab active" data-tab="tab-emergency">🛡️ Emergency Hub</button>
+      <button class="nav-tab" data-tab="tab-timer">⏱️ Guardian Timer</button>
+      <button class="nav-tab" data-tab="tab-fakecall">📞 Fake Call</button>
+      <button class="nav-tab" data-tab="tab-stealth">🕵️ Stealth Mode</button>
+      <button class="nav-tab" data-tab="tab-havens">🏥 Safe Havens</button>
+      <button class="nav-tab" data-tab="tab-history">📋 Incident Log</button>
+    </nav>
+
+    <div class="header-actions">
+      <div class="connection emergency-pill {{ 'active' if latest and latest.status == 'ACTIVE' else '' }}" id="systemStateBadge">
+        <span class="beacon"></span> <span id="systemStateText">{{ 'SOS ACTIVE' if latest and latest.status == 'ACTIVE' else 'SYSTEM SAFE' }}</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Emergency Strobe Banner (Visible when SOS is active) -->
+  <div class="emergency-banner" id="emergencyBanner" style="{{ 'display: flex;' if latest and latest.status == 'ACTIVE' else 'display: none;' }}">
+    <div class="emergency-banner-content">
+      <span class="alarm-icon">⚠️</span>
+      <div>
+        <strong>EMERGENCY SOS IN PROGRESS</strong>
+        <p>Live coordinates streamed. Alert broadcast generated for your trusted contacts circle.</p>
+      </div>
+    </div>
+    <div class="banner-actions">
+      <button class="siren-btn" id="sirenToggle">🔊 Siren ON</button>
+      <button class="banner-stop-btn" id="bannerStopBtn">Stop Emergency</button>
+    </div>
+  </div>
+
+  <main class="layout">
+    
+    <!-- ==================== TAB 1: EMERGENCY HUB ==================== -->
+    <div class="tab-pane active" id="tab-emergency">
+      <!-- Welcome Hero -->
+      <section class="welcome">
+        <div class="welcome-text">
+          <p class="eyebrow">PROTECTING HER · EMPOWERING ALL</p>
+          <h1>Immediate Defense &amp;<br><em>Distress Alerting</em></h1>
+          <p class="sub">Trigger loud or silent SOS dispatches, stream continuous live GPS coordinates to trusted contacts, dial national emergency helplines, and collect ambient audio evidence.</p>
+        </div>
+        <div class="shield-badge">
+          <div class="shield-inner">🛡️</div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <!-- CARD 1: SOS Control -->
+        <article class="card sos-card" id="sosCard">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">EMERGENCY CONTROL</p>
+              <h2>Distress Trigger</h2>
+            </div>
+            <span class="pill {{ 'active' if latest and latest.status == 'ACTIVE' else '' }}" id="statusPill">
+              {{ 'SOS ACTIVE' if latest and latest.status == 'ACTIVE' else 'SAFE' }}
+            </span>
+          </div>
+          
+          <p class="muted">Press below to instantly broadcast your live GPS location to your trusted support circle.</p>
+          
+          <div class="sos-wrapper">
+            <button class="sos-button {{ 'pulsing' if latest and latest.status == 'ACTIVE' else '' }}" id="sosButton" title="Press for SOS or tap to disarm">
+              <span class="sos-label">{{ 'STOP' if latest and latest.status == 'ACTIVE' else 'SOS' }}</span>
+              <small>{{ 'TAP TO DISARM' if latest and latest.status == 'ACTIVE' else 'LOUD ALARM' }}</small>
+            </button>
+          </div>
+
+          <div class="button-row">
+            <button class="secondary silent-sos-btn" id="silentSosBtn" title="Sends emergency coordinates without playing siren sound or flashing screen">🤫 Covert Silent SOS</button>
+            <button class="danger-btn" id="stopButton" style="{{ '' if latest and latest.status == 'ACTIVE' else 'display:none;' }}">⏹️ Stop Emergency</button>
+            <button class="secondary" id="locButton">📍 Force GPS Refresh</button>
+          </div>
+          
+          <!-- Audio Evidence Indicator -->
+          <div class="audio-evidence-box" id="audioEvidenceBox" style="display:none;">
+            <span class="rec-dot"></span> <strong>Ambient Audio Recording Active</strong>
+            <button class="link-btn" id="saveAudioBtn">💾 Download Evidence Audio</button>
+          </div>
+
+          <p class="notice" id="feedback" role="status">KAVACH Safety System standing by.</p>
+        </article>
+
+        <!-- CARD 2: Alert Dispatch Hub -->
+        <article class="card dispatch-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">CELLULAR SMS DISPATCH</p>
+              <h2>Emergency SMS Broadcast</h2>
+            </div>
+            <span class="pill light" id="dispatchPill">SMS READY</span>
+          </div>
+          
+          <p class="muted">When triggered, cellular SMS distress messages with your exact Google Maps pin are prepared for immediate 1-tap transmission to your trusted contacts:</p>
+          
+          <div class="alert-dispatch-list" id="alertDispatchList">
+            {% if alerts %}
+              {% for a in alerts %}
+                <div class="dispatch-item">
+                  <div class="dispatch-info">
+                    <strong>To: {{ a.contact_name }} ({{ a.contact_phone }})</strong>
+                    <small>{{ a.timestamp }} · Channel: {{ a.channel }} · Status: {{ a.status }}</small>
+                  </div>
+                  <div class="dispatch-links">
+                    <a href="sms:{{ a.contact_phone }}?body={{ a.message|urlencode }}" class="dispatch-btn sms-btn">✉️ Send SMS</a>
+                    <a href="tel:{{ a.contact_phone }}" class="dispatch-btn call-btn">📞 Call</a>
+                    <a href="https://api.whatsapp.com/send?phone={{ a.contact_phone }}&text={{ a.message|urlencode }}" target="_blank" class="dispatch-btn wa-subtle-btn" title="Send via WhatsApp">💬</a>
+                  </div>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="empty-dispatch" id="emptyDispatch">
+                <span>✉️</span>
+                <p>No active alerts right now. Pressing SOS prepares immediate 1-click Cellular SMS and direct phone call dispatches for every trusted contact.</p>
+              </div>
+            {% endif %}
+          </div>
+
+          <!-- Helplines Section -->
+          <div class="helplines-section">
+            <p class="eyebrow">NATIONAL EMERGENCY SPEED DIALS</p>
+            <div class="helpline-grid">
+              <a href="tel:112" class="helpline-chip emergency-112">
+                <span class="hl-num">112</span>
+                <span class="hl-desc">National Emergency</span>
+              </a>
+              <a href="tel:1091" class="helpline-chip emergency-women">
+                <span class="hl-num">1091</span>
+                <span class="hl-desc">Women Helpline</span>
+              </a>
+              <a href="tel:100" class="helpline-chip">
+                <span class="hl-num">100</span>
+                <span class="hl-desc">Police Control</span>
+              </a>
+              <a href="tel:108" class="helpline-chip">
+                <span class="hl-num">108</span>
+                <span class="hl-desc">Ambulance</span>
+              </a>
+            </div>
+          </div>
+        </article>
+
+        <!-- CARD 3: Live Map & Geo-tracking -->
+        <article class="card map-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">SATELLITE &amp; GPS</p>
+              <h2>Live Geo-Tracking</h2>
+            </div>
+            <span class="pill light" id="locationPill">
+              {{ 'LOCATION LIVE' if latest and latest.latitude else 'NOT SHARED' }}
+            </span>
+          </div>
+
+          <!-- Location Search & Locate Controls -->
+          <form id="mapSearchForm" class="map-search-bar">
+            <input id="mapSearchInput" placeholder="🔍 Search area, street, or landmark (e.g. Koramangala, Indiranagar, HSR)...">
+            <button type="submit" class="secondary small-btn" id="searchLocBtn">Search</button>
+            <button type="button" class="secondary small-btn locate-live-btn" id="locateMeBtn">🎯 Live GPS</button>
+          </form>
+
+          <!-- Human-Readable Address Badge -->
+          <div class="address-box" id="addressBox">
+            <span class="addr-icon">📍</span>
+            <span id="addressText">Pinpointing your live location...</span>
+          </div>
+          
+          <div id="map"></div>
+          
+          <div class="map-hint">
+            <span>💡 <strong>Tip:</strong> Drag the red pin or click anywhere on the map to fine-tune your exact location.</span>
+          </div>
+
+          <div class="map-meta">
+            <p class="muted small" id="coordinates">
+              {% if latest and latest.latitude %}
+                Latitude: {{ "%.5f"|format(latest.latitude) }} · Longitude: {{ "%.5f"|format(latest.longitude) }}
+              {% else %}
+                Location coordinates standing by.
+              {% endif %}
+            </p>
+            <a id="gmapsLink" href="https://maps.google.com/?q={{ latest.latitude }},{{ latest.longitude }}" target="_blank" class="gmaps-link" style="{{ 'display:inline-flex;' if latest and latest.latitude else 'display:none;' }}">
+              🗺️ Open in Google Maps
+            </a>
+          </div>
+        </article>
+
+        <!-- CARD 4: Trusted Contacts Management -->
+        <article class="card contacts-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">SUPPORT CIRCLE</p>
+              <h2>Trusted Contacts</h2>
+            </div>
+            <span class="count" id="contactsCount">{{ contacts|length }}</span>
+          </div>
+          
+          <form id="contactForm" class="contact-form">
+            <input id="contactName" placeholder="Contact Name (e.g. Mom, Roommate)" required maxlength="60">
+            <input id="contactPhone" placeholder="Mobile Number (e.g. 9876543210)" required maxlength="20" type="tel">
+            <button class="primary" type="submit">+ Add Contact</button>
+          </form>
+          
+          <ul id="contactList" class="contact-list">
+            {% for c in contacts %}
+            <li data-id="{{ c.id }}" data-phone="{{ c.phone }}" data-name="{{ c.name }}">
+              <div class="contact-meta">
+                <strong>{{ c.name }}</strong>
+                <small>{{ c.phone }}</small>
+              </div>
+              <div class="contact-actions">
+                <a href="sms:{{ c.phone }}?body=Hello%20{{ c.name }},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." class="action-btn sms-action" title="Send SMS to {{ c.name }}">✉️</a>
+                <a href="tel:{{ c.phone }}" class="action-btn call-action" title="Call {{ c.name }}">📞</a>
+                <button class="remove" aria-label="Remove {{ c.name }}" title="Delete Contact">×</button>
+              </div>
+            </li>
+            {% else %}
+            <li class="empty" id="emptyContacts">No trusted contacts added yet. Add at least one above.</li>
+            {% endfor %}
+          </ul>
+        </article>
+      </section>
+    </div>
+
+    <!-- ==================== TAB 2: GUARDIAN SAFETY TIMER ==================== -->
+    <div class="tab-pane" id="tab-timer">
+      <section class="card timer-card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">TIMED CHECK-IN</p>
+            <h2>"Walk Safe" Guardian Timer</h2>
+          </div>
+          <span class="pill light" id="timerBadge">INACTIVE</span>
+        </div>
+        
+        <p class="muted">Taking an auto, cab, or walking through an unfamiliar route? Set a safety countdown. If you don't check in before the timer expires, KAVACH automatically escalates to full emergency SOS and alerts your contacts with your live location.</p>
+
+        <div class="timer-setup" id="timerSetup">
+          <div class="preset-row">
+            <button class="preset-btn" data-min="5">5 Minutes</button>
+            <button class="preset-btn active" data-min="15">15 Minutes</button>
+            <button class="preset-btn" data-min="30">30 Minutes</button>
+            <button class="preset-btn" data-min="45">45 Minutes</button>
+          </div>
+          
+          <div class="destination-box">
+            <input id="destinationInput" placeholder="Trip destination / notes (e.g. Uber ride home from Koramangala)" value="Commute / Walk Home">
+            <button class="primary" id="startTimerBtn">⏱️ Start Guardian Timer</button>
+          </div>
+        </div>
+
+        <div class="timer-active-display" id="timerActiveDisplay" style="display:none;">
+          <div class="countdown-circle">
+            <span class="countdown-time" id="countdownTime">15:00</span>
+            <small id="countdownDest">Heading to: Commute</small>
+          </div>
+
+          <div class="timer-actions">
+            <button class="success-btn" id="checkInSafeBtn">✅ I Arrived Safely (Stop Timer)</button>
+            <button class="danger-btn" id="timerSosNowBtn">🚨 Escalate to SOS Now</button>
+          </div>
+          <p class="timer-warning">⚠️ Automatic SOS will trigger if check-in is not confirmed before zero.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ==================== TAB 3: FAKE CALL SIMULATOR ==================== -->
+    <div class="tab-pane" id="tab-fakecall">
+      <section class="card fakecall-card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">DISCREET ESCAPE</p>
+            <h2>Fake Incoming Call Simulator</h2>
+          </div>
+          <span class="pill light">READY</span>
+        </div>
+        
+        <p class="muted">Need an immediate, natural excuse to exit an awkward or uncomfortable situation? Trigger a realistic incoming smartphone call screen with audio ringtone and realistic voice dialogue.</p>
+
+        <div class="fakecall-config">
+          <div class="form-group">
+            <label>Choose Caller Identity:</label>
+            <div class="preset-row">
+              <button class="caller-preset active" data-name="Mom" data-num="+91 98200 11223">👩 Mom</button>
+              <button class="caller-preset" data-name="Dad" data-num="+91 94400 33445">👨 Dad</button>
+              <button class="caller-preset" data-name="Police Control Room" data-num="112">👮 Police Control</button>
+              <button class="caller-preset" data-name="Office Manager" data-num="+91 98111 22334">💼 Office</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Trigger Delay:</label>
+            <div class="preset-row">
+              <button class="delay-preset active" data-delay="3">In 3 seconds</button>
+              <button class="delay-preset" data-delay="10">In 10 seconds</button>
+              <button class="delay-preset" data-delay="30">In 30 seconds</button>
+            </div>
+          </div>
+
+          <button class="primary call-trigger-btn" id="startFakeCallBtn">📞 Schedule Fake Call</button>
+          <p class="small muted" id="fakeCallCountdown" style="display:none;"></p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ==================== TAB 4: STEALTH / COVERT MODE ==================== -->
+    <div class="tab-pane" id="tab-stealth">
+      <section class="card stealth-intro-card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">COVERT DISGUISE</p>
+            <h2>Stealth Calculator Disguise</h2>
+          </div>
+          <span class="pill light">STEALTH ENGINE</span>
+        </div>
+        
+        <p class="muted">In hostile situations where holding up an emergency app might provoke an aggressor, Stealth Mode masks KAVACH as a functional Standard Calculator. Entering your secret code (or typing <strong>911=</strong>) silently sends your live GPS coordinates to your contacts without any visual or audio indication on screen.</p>
+        
+        <button class="secondary accent-btn" id="enterStealthBtn">🕵️ Launch Stealth Disguise Screen</button>
+      </section>
+    </div>
+
+    <!-- ==================== TAB 5: SAFE HAVENS ==================== -->
+    <div class="tab-pane" id="tab-havens">
+      <section class="card havens-card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">NEARBY SUPPORT</p>
+            <h2>Emergency Safe Havens</h2>
+          </div>
+          <button class="secondary small-btn" id="refreshHavensBtn">🔄 Refresh Near Me</button>
+        </div>
+        
+        <p class="muted">Verified emergency response locations, All-Women Police Cells, trauma hospitals, and 24/7 pharmacies near your current GPS position:</p>
+
+        <div class="havens-list" id="havensList">
+          <!-- Populated dynamically via JS -->
+          <div class="loading-haven">Locating safe emergency points around your position...</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ==================== TAB 6: INCIDENT LOG & REPORT ==================== -->
+    <div class="tab-pane" id="tab-history">
+      <section class="card history-card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">AUDIT TRAIL</p>
+            <h2>Incident History &amp; Evidence Log</h2>
+          </div>
+          <button class="secondary small-btn" id="downloadReportBtn">📄 Export Police Report</button>
+        </div>
+        
+        <p class="muted">Permanent log of emergency events, coordinates, and contact dispatch records for police documentation or institutional security review:</p>
+
+        <div class="incidents-table-wrapper">
+          <table class="incidents-table" id="incidentsTable">
+            <thead>
+              <tr>
+                <th>Event ID</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Coordinates</th>
+                <th>Timestamp</th>
+                <th>Dispatches</th>
+              </tr>
+            </thead>
+            <tbody id="incidentsBody">
+              <!-- Populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      <strong>KAVACH Women's Safety System</strong> · Protecting Her, Empowering All. Pure Software Architecture.
+    </footer>
+  </main>
+
+  <!-- Mobile Bottom Navigation Bar (Thumb-Accessible for Mobile Devices) -->
+  <nav class="mobile-bottom-bar" id="mobileBottomBar" aria-label="Mobile Navigation">
+    <button class="mobile-nav-item active" data-tab="tab-emergency">
+      <span class="m-icon">🛡️</span>
+      <span class="m-label">SOS</span>
+    </button>
+    <button class="mobile-nav-item" data-tab="tab-timer">
+      <span class="m-icon">⏱️</span>
+      <span class="m-label">Timer</span>
+    </button>
+    <button class="mobile-nav-item" data-tab="tab-fakecall">
+      <span class="m-icon">📞</span>
+      <span class="m-label">Fake Call</span>
+    </button>
+    <button class="mobile-nav-item" data-tab="tab-stealth">
+      <span class="m-icon">🕵️</span>
+      <span class="m-label">Stealth</span>
+    </button>
+    <button class="mobile-nav-item" data-tab="tab-havens">
+      <span class="m-icon">🏥</span>
+      <span class="m-label">Havens</span>
+    </button>
+    <button class="mobile-nav-item" data-tab="tab-history">
+      <span class="m-icon">📋</span>
+      <span class="m-label">History</span>
+    </button>
+  </nav>
+
+  <!-- ==================== FULLSCREEN OVERLAYS ==================== -->
+
+  <!-- Fullscreen Fake Call Modal -->
+  <div class="fake-call-modal" id="fakeCallModal" style="display:none;">
+    <div class="fake-call-screen">
+      <div class="caller-header">
+        <div class="caller-avatar" id="fcAvatar">👩</div>
+        <h2 id="fcCallerName">Mom</h2>
+        <p id="fcCallerNumber">+91 98200 11223</p>
+        <span class="call-status-badge" id="fcCallStatus">Incoming Call...</span>
+      </div>
+
+      <div class="call-controls" id="fcIncomingControls">
+        <button class="call-btn-circle decline-btn" id="fcDeclineBtn">✕</button>
+        <button class="call-btn-circle accept-btn" id="fcAcceptBtn">📞</button>
+      </div>
+
+      <div class="active-call-controls" id="fcActiveControls" style="display:none;">
+        <span class="call-duration" id="fcDuration">00:00</span>
+        <div class="active-call-icons">
+          <span>🔇 Mute</span>
+          <span>🔊 Speaker</span>
+          <span>⌨️ Keypad</span>
+        </div>
+        <button class="call-btn-circle end-call-btn" id="fcEndCallBtn">🔴</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stealth Calculator Overlay -->
+  <div class="stealth-calculator-overlay" id="stealthCalcOverlay" style="display:none;">
+    <div class="calc-wrapper">
+      <div class="calc-header">
+        <span>Calculator</span>
+        <button class="calc-exit-btn" id="exitCalcBtn" title="Exit disguise">✕</button>
+      </div>
+      <div class="calc-display" id="calcDisplay">0</div>
+      <div class="calc-grid">
+        <button class="calc-btn op" data-val="C">C</button>
+        <button class="calc-btn op" data-val="+/-">±</button>
+        <button class="calc-btn op" data-val="%">%</button>
+        <button class="calc-btn op" data-val="/">÷</button>
+
+        <button class="calc-btn num" data-val="7">7</button>
+        <button class="calc-btn num" data-val="8">8</button>
+        <button class="calc-btn num" data-val="9">9</button>
+        <button class="calc-btn op" data-val="*">×</button>
+
+        <button class="calc-btn num" data-val="4">4</button>
+        <button class="calc-btn num" data-val="5">5</button>
+        <button class="calc-btn num" data-val="6">6</button>
+        <button class="calc-btn op" data-val="-">−</button>
+
+        <button class="calc-btn num" data-val="1">1</button>
+        <button class="calc-btn num" data-val="2">2</button>
+        <button class="calc-btn num" data-val="3">3</button>
+        <button class="calc-btn op" data-val="+">+</button>
+
+        <button class="calc-btn num zero" data-val="0">0</button>
+        <button class="calc-btn num" data-val=".">.</button>
+        <button class="calc-btn eq" data-val="=">=</button>
+      </div>
+      <p class="calc-secret-hint">(Disguised mode. Type 911= for silent SOS dispatch)</p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
