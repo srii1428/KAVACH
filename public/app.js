@@ -518,6 +518,19 @@ function activateEmergencyUI(data = {}, isSilent = false) {
   feedback.textContent = data.message || "🚨 EMERGENCY DISTRESS BROADCAST ACTIVE!";
   startAudioRecording();
   startContinuousTracking();
+
+  if (supabaseClient && currentAuthUser) {
+    try {
+      supabaseClient.from('incidents').insert([{
+        user_id: currentAuthUser.id,
+        status: 'ACTIVE',
+        latitude: currentPosition ? currentPosition.latitude : null,
+        longitude: currentPosition ? currentPosition.longitude : null,
+        trigger_type: isSilent ? 'SILENT' : 'MANUAL',
+        summary: 'Emergency distress alert broadcast initiated.'
+      }]).then(() => {});
+    } catch (_) {}
+  }
 }
 
 function deactivateEmergencyUI() {
@@ -566,7 +579,8 @@ async function triggerSOS(triggerType = "MANUAL", isSilent = false) {
       latitude: pos ? pos.latitude : (currentPosition ? currentPosition.latitude : null),
       longitude: pos ? pos.longitude : (currentPosition ? currentPosition.longitude : null),
       trigger_type: triggerType,
-      is_silent: isSilent
+      is_silent: isSilent,
+      contacts: getCachedContacts()
     };
 
     try {
@@ -653,6 +667,19 @@ async function stopSOS() {
         feedback.textContent = "Emergency disarmed locally. Alarm and sirens silenced.";
       }
     }
+  }
+
+  if (supabaseClient && currentAuthUser) {
+    try {
+      supabaseClient.from('incidents').insert([{
+        user_id: currentAuthUser.id,
+        status: 'CLOSED',
+        latitude: currentPosition ? currentPosition.latitude : null,
+        longitude: currentPosition ? currentPosition.longitude : null,
+        trigger_type: 'SAFE_STOP',
+        summary: 'User confirmed safe and disarmed emergency broadcast.'
+      }]).then(() => {});
+    } catch (_) {}
   }
 }
 stopButton.addEventListener("click", stopSOS);
@@ -1003,7 +1030,46 @@ document.getElementById("refreshHavensBtn").addEventListener("click", loadSafeHa
 let cachedIncidents = [];
 async function loadIncidentsHistory() {
   const tbody = document.getElementById("incidentsBody");
+  if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="6" class="muted">Loading audit records...</td></tr>';
+
+  if (supabaseClient && currentAuthUser) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('incidents')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(data) && data.length > 0) {
+        cachedIncidents = data.map(inc => ({
+          id: inc.id,
+          trigger_type: inc.trigger_type || "MANUAL",
+          status: inc.status || "CLOSED",
+          latitude: inc.latitude,
+          longitude: inc.longitude,
+          created_at: inc.created_at,
+          alerts_count: 1
+        }));
+        tbody.innerHTML = "";
+        cachedIncidents.forEach(inc => {
+          const tr = document.createElement("tr");
+          const coords = inc.latitude && inc.longitude ? `${Number(inc.latitude).toFixed(4)}, ${Number(inc.longitude).toFixed(4)}` : "Not Captured";
+          tr.innerHTML = `
+            <td>#${inc.id}</td>
+            <td><span class="type-tag ${(inc.trigger_type || '').toLowerCase()}">${escapeHTML(inc.trigger_type || 'MANUAL')}</span></td>
+            <td><span class="status-tag ${(inc.status || '').toLowerCase()}">${escapeHTML(inc.status || 'CLOSED')}</span></td>
+            <td>${coords}</td>
+            <td>${inc.created_at ? inc.created_at.slice(0, 19).replace('T', ' ') : 'N/A'}</td>
+            <td>${inc.alerts_count} Dispatched</td>
+          `;
+          tbody.appendChild(tr);
+        });
+        return;
+      }
+    } catch (supaErr) {
+      console.warn("Could not load incidents from Supabase:", supaErr);
+    }
+  }
+
   try {
     const res = await fetch("/api/incidents");
     const data = await res.json();
@@ -1075,7 +1141,377 @@ document.getElementById("downloadReportBtn").addEventListener("click", () => {
 });
 
 // ----------------------------------------------------
-// 11. Contact Management
+// 11. Contact Management & Supabase Cloud Sync
+// ----------------------------------------------------
+let supabaseClient = null;
+let currentAuthUser = null;
+const LOCAL_CONTACTS_KEY = "kavach_trusted_contacts";
+let isSignUpMode = false;
+
+function getLocalContacts() {
+  try {
+    const raw = localStorage.getItem(LOCAL_CONTACTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveLocalContacts(list) {
+  try {
+    localStorage.setItem(LOCAL_CONTACTS_KEY, JSON.stringify(list));
+  } catch (_) {}
+}
+
+function getCachedContacts() {
+  const domContacts = [];
+  if (contactList) {
+    contactList.querySelectorAll("li:not(.empty)").forEach(li => {
+      if (li.dataset.name && li.dataset.phone) {
+        domContacts.push({
+          name: li.dataset.name,
+          phone: li.dataset.phone
+        });
+      }
+    });
+  }
+  if (domContacts.length > 0) return domContacts;
+  const local = getLocalContacts();
+  return local.map(c => ({ name: c.name, phone: c.phone }));
+}
+
+function renderContactsList(contacts) {
+  if (!contactList) return;
+  contactList.innerHTML = "";
+  if (!contacts || contacts.length === 0) {
+    contactList.innerHTML = '<li class="empty" id="emptyContacts">No trusted contacts added yet. Add at least one above.</li>';
+    if (contactsCount) contactsCount.textContent = "0";
+    return;
+  }
+
+  contacts.forEach(c => {
+    const safeName = escapeHTML(c.name);
+    const safePhone = escapeHTML(c.phone);
+    const digits = (c.phone || "").replace(/\D/g, "");
+    const waPhone = digits.length === 10 ? "91" + digits : digits;
+
+    const li = document.createElement("li");
+    li.dataset.id = c.id;
+    li.dataset.name = c.name;
+    li.dataset.phone = c.phone;
+    li.innerHTML = `
+      <div class="contact-meta">
+        <strong>${safeName}</strong>
+        <small>${safePhone}</small>
+      </div>
+      <div class="contact-actions">
+        <a href="https://api.whatsapp.com/send?phone=${encodeURIComponent(waPhone)}&text=Hello%20${encodeURIComponent(c.name)},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." target="_blank" class="action-btn wa-action" title="WhatsApp ${safeName}" style="color:#25D366;">💬</a>
+        <a href="tel:${encodeURIComponent(c.phone)}" class="action-btn call-action" title="Call ${safeName}">📞</a>
+        <button class="remove" aria-label="Remove ${safeName}" title="Delete Contact">×</button>
+      </div>
+    `;
+    contactList.appendChild(li);
+  });
+
+  if (contactsCount) contactsCount.textContent = contacts.length;
+}
+
+async function loadContacts() {
+  if (supabaseClient && currentAuthUser) {
+    try {
+      const { data, error } = await supabaseClient
+        .from("contacts")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (!error && Array.isArray(data)) {
+        saveLocalContacts(data);
+        renderContactsList(data);
+        return;
+      }
+    } catch (err) {
+      console.warn("Could not load contacts from Supabase:", err);
+    }
+  }
+
+  const local = getLocalContacts();
+  if (local && local.length > 0) {
+    renderContactsList(local);
+  } else {
+    try {
+      const res = await fetch("/api/contacts");
+      if (res.ok) {
+        const serverContacts = await res.json();
+        if (Array.isArray(serverContacts) && serverContacts.length > 0) {
+          saveLocalContacts(serverContacts);
+          renderContactsList(serverContacts);
+          return;
+        }
+      }
+    } catch (_) {}
+    renderContactsList([]);
+  }
+}
+
+async function syncLocalContactsToCloud() {
+  if (!supabaseClient || !currentAuthUser) return;
+  const local = getLocalContacts();
+  if (!local || local.length === 0) return;
+
+  try {
+    const { data: cloudContacts } = await supabaseClient
+      .from("contacts")
+      .select("name, phone");
+    const existing = new Set((cloudContacts || []).map(c => `${c.name}:::${c.phone}`));
+
+    const toInsert = local
+      .filter(c => !existing.has(`${c.name}:::${c.phone}`))
+      .map(c => ({
+        user_id: currentAuthUser.id,
+        name: c.name,
+        phone: c.phone
+      }));
+
+    if (toInsert.length > 0) {
+      await supabaseClient.from("contacts").insert(toInsert);
+    }
+  } catch (err) {
+    console.warn("Auto-sync local contacts to Supabase skipped:", err);
+  }
+}
+
+function openAuthModal() {
+  const modal = document.getElementById("authModal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  clearAuthAlerts();
+  updateAuthModalView();
+}
+
+function closeAuthModal() {
+  const modal = document.getElementById("authModal");
+  if (!modal) return;
+  modal.style.display = "none";
+  clearAuthAlerts();
+}
+
+function updateAuthModalView() {
+  const form = document.getElementById("authForm");
+  const userInfo = document.getElementById("authUserInfo");
+  const tabSignIn = document.getElementById("tabSignInBtn");
+  const tabSignUp = document.getElementById("tabSignUpBtn");
+  const submitBtn = document.getElementById("authSubmitBtn");
+  const modalTitle = document.getElementById("authModalTitle");
+  const userEmail = document.getElementById("authUserEmail");
+
+  if (currentAuthUser) {
+    if (form) form.style.display = "none";
+    if (userInfo) userInfo.style.display = "block";
+    if (modalTitle) modalTitle.textContent = "👤 Your KAVACH Account";
+    if (userEmail) userEmail.textContent = currentAuthUser.email;
+    if (tabSignIn && tabSignIn.parentElement) tabSignIn.parentElement.style.display = "none";
+  } else {
+    if (form) form.style.display = "flex";
+    if (userInfo) userInfo.style.display = "none";
+    if (tabSignIn && tabSignIn.parentElement) tabSignIn.parentElement.style.display = "flex";
+    if (isSignUpMode) {
+      if (tabSignUp) {
+        tabSignUp.classList.add("active");
+        tabSignUp.setAttribute("aria-selected", "true");
+      }
+      if (tabSignIn) {
+        tabSignIn.classList.remove("active");
+        tabSignIn.setAttribute("aria-selected", "false");
+      }
+      if (submitBtn) submitBtn.textContent = "Create Account";
+      if (modalTitle) modalTitle.textContent = "✨ Create KAVACH Account";
+    } else {
+      if (tabSignIn) {
+        tabSignIn.classList.add("active");
+        tabSignIn.setAttribute("aria-selected", "true");
+      }
+      if (tabSignUp) {
+        tabSignUp.classList.remove("active");
+        tabSignUp.setAttribute("aria-selected", "false");
+      }
+      if (submitBtn) submitBtn.textContent = "Sign In";
+      if (modalTitle) modalTitle.textContent = "🔑 Sign In to KAVACH";
+    }
+  }
+}
+
+function clearAuthAlerts() {
+  const errEl = document.getElementById("authError");
+  const succEl = document.getElementById("authSuccess");
+  if (errEl) { errEl.textContent = ""; errEl.style.display = "none"; }
+  if (succEl) { succEl.textContent = ""; succEl.style.display = "none"; }
+}
+
+function showAuthError(msg) {
+  const errEl = document.getElementById("authError");
+  if (!errEl) return;
+  errEl.textContent = msg;
+  errEl.style.display = "block";
+}
+
+function showAuthSuccess(msg) {
+  const succEl = document.getElementById("authSuccess");
+  if (!succEl) return;
+  succEl.textContent = msg;
+  succEl.style.display = "block";
+}
+
+async function handleAuthStateChange(event, session) {
+  currentAuthUser = session && session.user ? session.user : null;
+  const authBtn = document.getElementById("openAuthModalBtn");
+
+  if (currentAuthUser) {
+    if (authBtn) {
+      const username = (currentAuthUser.email || "User").split("@")[0];
+      authBtn.textContent = `👤 ${username}`;
+      authBtn.classList.add("authenticated");
+    }
+    await syncLocalContactsToCloud();
+    await loadContacts();
+    await loadIncidentsHistory();
+  } else {
+    if (authBtn) {
+      authBtn.textContent = "🔑 Sign In";
+      authBtn.classList.remove("authenticated");
+    }
+    await loadContacts();
+  }
+  updateAuthModalView();
+}
+
+async function initSupabase() {
+  try {
+    const configRes = await fetch("/api/config");
+    if (!configRes.ok) return;
+    const config = await configRes.json();
+    if (config.supabase_url && config.supabase_anon_key && window.supabase) {
+      supabaseClient = window.supabase.createClient(config.supabase_url, config.supabase_anon_key);
+      window.supabaseClient = supabaseClient;
+
+      supabaseClient.auth.onAuthStateChange(async (event, session) => {
+        await handleAuthStateChange(event, session);
+      });
+
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      await handleAuthStateChange("INITIAL", session);
+    } else {
+      console.info("Supabase credentials not configured in environment; running in guest mode with local storage.");
+      await loadContacts();
+    }
+  } catch (err) {
+    console.warn("Supabase init error:", err);
+    await loadContacts();
+  }
+}
+
+function initAuthUI() {
+  const openBtn = document.getElementById("openAuthModalBtn");
+  const closeBtn = document.getElementById("closeAuthModalBtn");
+  const modal = document.getElementById("authModal");
+  const tabSignIn = document.getElementById("tabSignInBtn");
+  const tabSignUp = document.getElementById("tabSignUpBtn");
+  const form = document.getElementById("authForm");
+  const signOutBtn = document.getElementById("signOutBtn");
+
+  if (openBtn) openBtn.addEventListener("click", openAuthModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeAuthModal);
+
+  if (modal) {
+    modal.addEventListener("click", e => {
+      if (e.target === modal) closeAuthModal();
+    });
+  }
+
+  if (tabSignIn) {
+    tabSignIn.addEventListener("click", () => {
+      isSignUpMode = false;
+      clearAuthAlerts();
+      updateAuthModalView();
+    });
+  }
+
+  if (tabSignUp) {
+    tabSignUp.addEventListener("click", () => {
+      isSignUpMode = true;
+      clearAuthAlerts();
+      updateAuthModalView();
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      clearAuthAlerts();
+      const email = document.getElementById("authEmail").value.trim();
+      const password = document.getElementById("authPassword").value;
+      const submitBtn = document.getElementById("authSubmitBtn");
+      const origText = submitBtn ? submitBtn.textContent : "Submit";
+
+      if (!email || !password) {
+        showAuthError("Please provide both email and password.");
+        return;
+      }
+      if (password.length < 6) {
+        showAuthError("Password must be at least 6 characters.");
+        return;
+      }
+
+      if (!supabaseClient) {
+        showAuthError("Supabase is not configured yet. Set SUPABASE_URL and SUPABASE_ANON_KEY in your Vercel project environment variables.");
+        return;
+      }
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = isSignUpMode ? "Creating account..." : "Signing in...";
+      }
+
+      try {
+        if (isSignUpMode) {
+          const { data, error } = await supabaseClient.auth.signUp({ email, password });
+          if (error) throw error;
+          if (data.session) {
+            showAuthSuccess("Account created successfully!");
+            setTimeout(closeAuthModal, 1200);
+          } else {
+            showAuthSuccess("Confirmation link sent! Please check your email to verify your account.");
+          }
+        } else {
+          const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          showAuthSuccess("Signed in successfully!");
+          setTimeout(closeAuthModal, 800);
+        }
+      } catch (authErr) {
+        showAuthError(authErr.message || "Authentication failed.");
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = origText;
+        }
+      }
+    });
+  }
+
+  if (signOutBtn) {
+    signOutBtn.addEventListener("click", async () => {
+      if (supabaseClient) {
+        await supabaseClient.auth.signOut();
+      }
+      currentAuthUser = null;
+      await handleAuthStateChange("SIGNED_OUT", null);
+      closeAuthModal();
+      feedback.textContent = "Signed out of KAVACH cloud account.";
+    });
+  }
+}
+
+// ----------------------------------------------------
+// 12. Contact Form & List Event Listeners
 // ----------------------------------------------------
 contactForm.addEventListener("submit", async e => {
   e.preventDefault();
@@ -1097,38 +1533,64 @@ contactForm.addEventListener("submit", async e => {
   }
 
   try {
-    const res = await postJSON("/api/contacts", { name, phone });
-    const emptyNotice = document.getElementById("emptyContacts");
-    if (emptyNotice) emptyNotice.remove();
+    // 1. If signed in with Supabase, insert directly into Supabase PostgreSQL with RLS
+    if (supabaseClient && currentAuthUser) {
+      const { data, error } = await supabaseClient
+        .from("contacts")
+        .insert([{ user_id: currentAuthUser.id, name, phone }])
+        .select();
+      if (error) throw error;
+      const newContact = data[0];
+      const local = getLocalContacts();
+      local.unshift(newContact);
+      saveLocalContacts(local);
+      renderContactsList(local);
 
-    const safeName = escapeHTML(res.name);
-    const safePhone = escapeHTML(res.phone);
+      nameInput.value = "";
+      phoneInput.value = "";
+      feedback.textContent = `Saved trusted contact "${name}" to secure cloud.`;
+      return;
+    }
 
-    const li = document.createElement("li");
-    li.dataset.id = res.id;
-    li.dataset.name = res.name;
-    li.dataset.phone = res.phone;
-    li.innerHTML = `
-      <div class="contact-meta">
-        <strong>${safeName}</strong>
-        <small>${safePhone}</small>
-      </div>
-      <div class="contact-actions">
-        <a href="https://api.whatsapp.com/send?phone=${encodeURIComponent(res.phone.replace(/\D/g, ''))}&text=Hello%20${encodeURIComponent(res.name)},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." target="_blank" class="action-btn wa-action" title="WhatsApp ${safeName}" style="color:#25D366;">💬</a>
-        <a href="tel:${encodeURIComponent(res.phone)}" class="action-btn call-action" title="Call ${safeName}">📞</a>
-        <button class="remove" aria-label="Remove ${safeName}" title="Delete Contact">×</button>
-      </div>
-    `;
-    contactList.prepend(li);
-    contactsCount.textContent = contactList.querySelectorAll("li:not(.empty)").length;
+    // 2. Guest Mode: Store in localStorage (immediate availability, no server failure risk)
+    const newContact = {
+      id: "local_" + Date.now(),
+      name,
+      phone,
+      created_at: new Date().toISOString()
+    };
+    const local = getLocalContacts();
+    local.unshift(newContact);
+    saveLocalContacts(local);
+    renderContactsList(local);
 
     nameInput.value = "";
     phoneInput.value = "";
-    feedback.textContent = `Saved trusted contact "${res.name}".`;
+    feedback.textContent = `Saved trusted contact "${name}".`;
+
+    // 3. Background opportunistic save to local Flask/SQLite if running locally
+    fetch("/api/contacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, phone })
+    }).catch(() => {});
+
   } catch (err) {
     console.error("Add contact error:", err);
-    feedback.textContent = "Could not add contact: " + err.message;
-    alert("Could not add contact: " + err.message);
+    // Fallback: save to localStorage anyway so the emergency contact is never lost!
+    const fallbackContact = {
+      id: "local_" + Date.now(),
+      name,
+      phone,
+      created_at: new Date().toISOString()
+    };
+    const local = getLocalContacts();
+    local.unshift(fallbackContact);
+    saveLocalContacts(local);
+    renderContactsList(local);
+    nameInput.value = "";
+    phoneInput.value = "";
+    feedback.textContent = `Saved trusted contact "${name}" locally.`;
   } finally {
     if (submitBtn) {
       submitBtn.disabled = false;
@@ -1146,10 +1608,19 @@ contactList.addEventListener("click", async e => {
   if (!confirm(`Delete trusted contact "${li.dataset.name || ''}"?`)) return;
 
   try {
-    await fetch(`/api/contacts/${contactId}`, { method: "DELETE" });
+    if (supabaseClient && currentAuthUser && !String(contactId).startsWith("local_")) {
+      await supabaseClient.from("contacts").delete().eq("id", contactId);
+    } else {
+      fetch(`/api/contacts/${contactId}`, { method: "DELETE" }).catch(() => {});
+    }
+
+    // Remove from localStorage
+    const local = getLocalContacts().filter(c => String(c.id) !== String(contactId));
+    saveLocalContacts(local);
+
     li.remove();
     const remaining = contactList.querySelectorAll("li:not(.empty)").length;
-    contactsCount.textContent = remaining;
+    if (contactsCount) contactsCount.textContent = remaining;
     if (remaining === 0) {
       contactList.innerHTML = '<li class="empty" id="emptyContacts">No trusted contacts added yet. Add at least one above.</li>';
     }
@@ -1163,6 +1634,9 @@ contactList.addEventListener("click", async e => {
 // 12. On Load Initialization & Background Sync
 // ----------------------------------------------------
 window.addEventListener("DOMContentLoaded", () => {
+  initAuthUI();
+  initSupabase();
+
   const initialStatus = document.body.dataset.status;
   const initialLat = parseFloat(document.body.dataset.lat);
   const initialLon = parseFloat(document.body.dataset.lon);

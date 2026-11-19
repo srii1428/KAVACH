@@ -213,6 +213,9 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertIn("KAVACH", html)
         self.assertIn("Embedded KAVACH Critical Stylesheet", html)
         self.assertIn("kavach-brand-shield", html)
+        self.assertIn("@supabase/supabase-js", html)
+        self.assertIn("openAuthModalBtn", html)
+        self.assertIn("authModal", html)
 
         # 2. Test static assets resolve with 200 OK and proper content types
         css_resp = self.client.get("/static/style.css")
