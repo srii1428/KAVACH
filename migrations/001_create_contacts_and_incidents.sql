@@ -1,5 +1,5 @@
 -- KAVACH Women's Safety System
--- Supabase PostgreSQL Schema with Row-Level Security (RLS)
+-- Supabase PostgreSQL Schema with Row-Level Security (RLS) & API Role Grants
 
 -- 1. Create contacts table
 create table if not exists public.contacts (
@@ -11,18 +11,9 @@ create table if not exists public.contacts (
 );
 
 alter table public.contacts enable row level security;
-
-create policy "Users can view own contacts"
-  on public.contacts for select
-  using (auth.uid() = user_id);
-
-create policy "Users can insert own contacts"
-  on public.contacts for insert
-  with check (auth.uid() = user_id);
-
-create policy "Users can delete own contacts"
-  on public.contacts for delete
-  using (auth.uid() = user_id);
+grant usage on schema public to anon, authenticated;
+grant all on table public.contacts to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
 
 -- 2. Create incidents table
 create table if not exists public.incidents (
@@ -37,11 +28,27 @@ create table if not exists public.incidents (
 );
 
 alter table public.incidents enable row level security;
+grant all on table public.incidents to anon, authenticated;
 
-create policy "Users can view own incidents"
-  on public.incidents for select
-  using (auth.uid() = user_id);
+-- 3. Row-Level Security Policies
+do $$
+begin
+  if not exists (select 1 from pg_policies where tablename = 'contacts' and policyname = 'Users can view own contacts') then
+    create policy "Users can view own contacts" on public.contacts for select using (auth.uid() = user_id);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'contacts' and policyname = 'Users can insert own contacts') then
+    create policy "Users can insert own contacts" on public.contacts for insert with check (auth.uid() = user_id);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'contacts' and policyname = 'Users can delete own contacts') then
+    create policy "Users can delete own contacts" on public.contacts for delete using (auth.uid() = user_id);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'incidents' and policyname = 'Users can view own incidents') then
+    create policy "Users can view own incidents" on public.incidents for select using (auth.uid() = user_id);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'incidents' and policyname = 'Users can insert own incidents') then
+    create policy "Users can insert own incidents" on public.incidents for insert with check (auth.uid() = user_id);
+  end if;
+end $$;
 
-create policy "Users can insert own incidents"
-  on public.incidents for insert
-  with check (auth.uid() = user_id);
+-- 4. Notify PostgREST API schema cache
+notify pgrst, 'reload schema';

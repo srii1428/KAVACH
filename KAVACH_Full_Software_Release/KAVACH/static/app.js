@@ -1473,12 +1473,30 @@ function initAuthUI() {
       try {
         if (isSignUpMode) {
           const { data, error } = await supabaseClient.auth.signUp({ email, password });
-          if (error) throw error;
-          if (data.session) {
+          if (error) {
+            // If email is already registered or rate limited, attempt direct sign in
+            if (error.message && (error.message.toLowerCase().includes("rate limit") || error.message.toLowerCase().includes("already registered") || error.message.toLowerCase().includes("already exists"))) {
+              const { data: signInData, error: signInError } = await supabaseClient.auth.signInWithPassword({ email, password });
+              if (!signInError && signInData && signInData.session) {
+                showAuthSuccess("Signed in successfully!");
+                setTimeout(closeAuthModal, 800);
+                return;
+              }
+            }
+            throw error;
+          }
+          if (data && data.session) {
             showAuthSuccess("Account created successfully!");
             setTimeout(closeAuthModal, 1200);
           } else {
-            showAuthSuccess("Confirmation link sent! Please check your email to verify your account.");
+            // Attempt immediate password sign in in case auto-confirm is active
+            const { data: signInData, error: signInError } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (!signInError && signInData && signInData.session) {
+              showAuthSuccess("Signed in successfully!");
+              setTimeout(closeAuthModal, 800);
+            } else {
+              showAuthSuccess("Account registered! If confirmation is required, run the auto-confirm SQL query in Supabase.");
+            }
           }
         } else {
           const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
@@ -1487,7 +1505,14 @@ function initAuthUI() {
           setTimeout(closeAuthModal, 800);
         }
       } catch (authErr) {
-        showAuthError(authErr.message || "Authentication failed.");
+        const msg = authErr.message || "Authentication failed.";
+        if (msg.toLowerCase().includes("rate limit")) {
+          showAuthError("Email rate limit exceeded. Please run the SQL auto-confirm script in Supabase, or switch to 'Sign In' if you already registered.");
+        } else if (msg.toLowerCase().includes("not confirmed")) {
+          showAuthError("Email not confirmed. Run the auto-confirm SQL query in Supabase to log in instantly without waiting for emails.");
+        } else {
+          showAuthError(msg);
+        }
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
