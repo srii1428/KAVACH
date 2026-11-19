@@ -363,11 +363,23 @@ def start_sos():
         trigger_type = request.args.get("trigger_type", "MANUAL")
         is_silent = 1 if request.args.get("is_silent") in ("1", "true", "True") else 0
         lat, lon = validate_coordinates(lat_raw, lon_raw)
+        payload_contacts = None
     else:
         data = request.get_json(silent=True) or {}
         lat, lon = validate_coordinates(data.get("latitude"), data.get("longitude"))
         trigger_type = data.get("trigger_type", "MANUAL")
         is_silent = 1 if data.get("is_silent") else 0
+        raw_contacts = data.get("contacts")
+        if isinstance(raw_contacts, list) and len(raw_contacts) > 0:
+            payload_contacts = []
+            for c in raw_contacts:
+                if isinstance(c, dict) and c.get("name") and c.get("phone"):
+                    payload_contacts.append({
+                        "name": str(c["name"]).strip(),
+                        "phone": str(c["phone"]).strip()
+                    })
+        else:
+            payload_contacts = None
     now_utc = datetime.now(timezone.utc).isoformat()
     now_local = datetime.now().isoformat()
     
@@ -393,7 +405,10 @@ def start_sos():
 
         # Cancel any active safety timer when SOS is triggered
         conn.execute("UPDATE safety_timers SET status='EXPIRED_TRIGGERED' WHERE status='RUNNING'")
-        contacts = [dict(c) for c in conn.execute("SELECT * FROM contacts").fetchall()]
+        if payload_contacts is not None:
+            contacts = payload_contacts
+        else:
+            contacts = [dict(c) for c in conn.execute("SELECT * FROM contacts").fetchall()]
 
     # 2. Outside DB lock: prepare messages and invoke SMS gateway without blocking SQLite
     alert_msg = generate_sms_message(lat, lon, trigger_type)

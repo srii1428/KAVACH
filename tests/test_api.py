@@ -146,6 +146,20 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertEqual(stop_get_resp.status_code, 200)
         self.assertEqual(stop_get_resp.get_json()["status"], "SAFE")
 
+    def test_sos_with_client_supplied_contacts(self):
+        client_contacts = [
+            {"name": "Direct Test Contact", "phone": "9876543210"}
+        ]
+        resp = self.client.post("/api/sos", json={
+            "latitude": 12.9716,
+            "longitude": 77.5946,
+            "contacts": client_contacts
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(len(data["dispatches"]), 1)
+        self.assertEqual(data["dispatches"][0]["name"], "Direct Test Contact")
+
     def test_guardian_safety_timer(self):
         # 1. Start timer
         start_resp = self.client.post("/api/timer/start", json={"minutes": 20, "destination": "Home Metro"})
