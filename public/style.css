@@ -566,6 +566,25 @@ body.emergency-active {
   min-height: 38px;
 }
 
+.dispatch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.badge-sent { background: rgba(34, 197, 94, 0.15); color: #16a34a; border: 1px solid rgba(34, 197, 94, 0.35); }
+.badge-simulated { background: rgba(56, 189, 248, 0.15); color: #0284c7; border: 1px solid rgba(56, 189, 248, 0.35); }
+.badge-helpline { background: rgba(239, 68, 68, 0.15); color: #dc2626; border: 1px solid rgba(239, 68, 68, 0.35); }
+.badge-failed { background: rgba(239, 68, 68, 0.15); color: #dc2626; border: 1px solid rgba(239, 68, 68, 0.35); }
+.badge-cooldown { background: rgba(148, 163, 184, 0.15); color: #64748b; border: 1px solid rgba(148, 163, 184, 0.35); }
+.fallback-sms-btn { background: #f59e0b; color: #fff; font-weight: 700; }
+.fallback-sms-btn:hover { background: #d97706; }
+
 .sms-btn { background: #0284c7; color: #fff; }
 .sms-btn:hover { background: #0369a1; }
 .wa-btn { background: #25d366; color: #fff; }

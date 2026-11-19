@@ -10,7 +10,7 @@
 1. **🚨 Multi-Mode Emergency SOS**:
    - **Loud Alarm SOS**: Synthesizes an emergency police siren via the Web Audio API with pulsing beacon alerts.
    - **Covert Silent SOS**: Dispatches coordinates silently without triggering alarms or alerting bystanders.
-   - **One-Tap WhatsApp & Call Broadcast**: Instantly prepares pre-composed distress messages with your exact live Google Maps coordinates for your trusted contacts.
+   - **Automatic Cellular SMS & Call Broadcast (Twilio Powered)**: Automatically broadcasts emergency distress SMS with your live Google Maps coordinates to all trusted contacts in the background, with 1-tap phone speed-dials and native SMS fallback.
    - **National Helplines Speed Dial**: Instant 1-tap emergency calling to **112** (National Emergency), **1091** (Women Helpline), **100** (Police Control), and **108** (Ambulance).
    - **Audio Evidence Capture**: Records ambient sound via microphone during active emergencies (`MediaRecorder`) and provides a 1-click download of the audio evidence file.
 
@@ -76,13 +76,25 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 4: Start KAVACH
+### Step 4: Configure Twilio Cellular SMS (Optional)
+To send live automated cellular SMS alerts to emergency contacts, configure your Twilio credentials in `.env` or your hosting environment (e.g. Vercel):
+
+```bash
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_auth_token_here
+TWILIO_PHONE_NUMBER=+12055550199
+TWILIO_DEFAULT_COUNTRY=+91
+```
+
+> **Note:** If Twilio environment variables are omitted, KAVACH runs safely in **Simulation Mode**, logging dispatches and providing 1-tap cellular SMS links without crashing.
+
+### Step 5: Start KAVACH
 ```bash
 python app.py
 ```
 *(On Linux/macOS, you can use `python3 app.py`)*
 
-### Step 5: Open in Your Browser
+### Step 6: Open in Your Browser
 - Visit **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in Chrome, Edge, Safari, or Firefox.
 - To view on your mobile phone on the same Wi-Fi, open `http://<your-computer-ip>:5000`.
 

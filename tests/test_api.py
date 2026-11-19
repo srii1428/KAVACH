@@ -40,6 +40,76 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertEqual(clean_phone("123"), "")
         self.assertEqual(clean_phone("abc"), "")
 
+    def test_normalize_and_route_contact(self):
+        # Short-code helplines
+        res112 = app.normalize_and_route_contact("112")
+        self.assertEqual(res112["route"], "HELPLINE")
+        self.assertEqual(res112["phone"], "112")
+
+        # 10-digit standard Indian mobile
+        res10 = app.normalize_and_route_contact("9876543210")
+        self.assertEqual(res10["route"], "CELLULAR")
+        self.assertEqual(res10["phone"], "+919876543210")
+
+        # 11-digit mobile with leading 0
+        res0 = app.normalize_and_route_contact("09876543210")
+        self.assertEqual(res0["route"], "CELLULAR")
+        self.assertEqual(res0["phone"], "+919876543210")
+
+        # International number with existing +
+        res_intl = app.normalize_and_route_contact("+1 (555) 234-5678")
+        self.assertEqual(res_intl["route"], "CELLULAR")
+        self.assertEqual(res_intl["phone"], "+15552345678")
+
+        # Invalid garbage number
+        res_inv = app.normalize_and_route_contact("abc")
+        self.assertEqual(res_inv["route"], "INVALID")
+
+    def test_send_twilio_sms_simulated(self):
+        # When credentials are not set, it should simulate dispatch
+        res = app.send_twilio_sms("+919876543210", "Test Emergency Alert")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["status"], "simulated")
+        self.assertEqual(res["provider"], "Simulated")
+
+    def test_sos_dispatches_sms_structured(self):
+        # Add a contact
+        self.client.post("/api/contacts", json={"name": "Guardian", "phone": "9876543210"})
+        
+        # Trigger SOS
+        res = self.client.post("/api/sos", json={"latitude": 12.9716, "longitude": 77.5946})
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["status"], "ACTIVE")
+        self.assertIn("dispatches", data)
+        self.assertEqual(len(data["dispatches"]), 1)
+        
+        dispatch = data["dispatches"][0]
+        self.assertEqual(dispatch["contact_name"], "Guardian")
+        self.assertEqual(dispatch["contact_phone"], "+919876543210")
+        self.assertEqual(dispatch["channel"], "SMS")
+        self.assertEqual(dispatch["status"], "simulated")
+        self.assertIn("sms:+919876543210", dispatch["fallback_sms_url"])
+        self.assertIn("tel:+919876543210", dispatch["call_url"])
+
+    def test_sos_deduplication_cooldown(self):
+        # Add a contact
+        self.client.post("/api/contacts", json={"name": "Guardian", "phone": "9876543210"})
+
+        # Trigger first SOS
+        res1 = self.client.post("/api/sos", json={"latitude": 12.9716, "longitude": 77.5946})
+        self.assertEqual(res1.status_code, 200)
+        
+        # Trigger second SOS immediately (within 30-sec window)
+        res2 = self.client.post("/api/sos", json={"latitude": 12.9717, "longitude": 77.5947})
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.get_json()
+        self.assertTrue(data2["ok"])
+        # Dispatches should be marked as suppressed to prevent duplicate SMS
+        for d in data2["dispatches"]:
+            self.assertEqual(d["status"], "cooldown_suppressed")
+
     def test_coordinate_validation(self):
         lat, lon = validate_coordinates(12.9716, 77.5946)
         self.assertAlmostEqual(lat, 12.9716)
@@ -115,7 +185,7 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertTrue(sos_data["ok"])
         self.assertEqual(sos_data["status"], "ACTIVE")
         self.assertEqual(len(sos_data["dispatches"]), 1)
-        self.assertIn("sms:9876543210", sos_data["dispatches"][0]["sms_url"])
+        self.assertIn("9876543210", sos_data["dispatches"][0]["sms_url"])
         self.assertIn("whatsapp.com", sos_data["dispatches"][0]["whatsapp_url"])
 
         # 2. Check /api/status returns ACTIVE
@@ -238,6 +308,39 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertEqual(root_css.status_code, 200)
         root_js = self.client.get("/app.js")
         self.assertEqual(root_js.status_code, 200)
+
+    def test_sos_shortcode_helpline_bypasses_twilio(self):
+        # Trigger SOS with shortcode 112
+        res = self.client.post("/api/sos", json={
+            "latitude": 12.9716,
+            "longitude": 77.5946,
+            "contacts": [{"name": "Emergency Police", "phone": "112"}]
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(len(data["dispatches"]), 1)
+        dispatch = data["dispatches"][0]
+        self.assertEqual(dispatch["channel"], "CALL")
+        self.assertEqual(dispatch["status"], "helpline_speed_dial")
+        self.assertEqual(dispatch["contact_phone"], "112")
+        self.assertEqual(dispatch["call_url"], "tel:112")
+
+    def test_send_twilio_sms_error_handling(self):
+        # Test simulated network error
+        import unittest.mock as mock
+        import urllib.error
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = urllib.error.URLError("Network unreachable")
+            with mock.patch.dict(os.environ, {
+                "TWILIO_ACCOUNT_SID": "test_dummy_twilio_sid",
+                "TWILIO_AUTH_TOKEN": "secret_token",
+                "TWILIO_PHONE_NUMBER": "+12055550199"
+            }):
+                res = app.send_twilio_sms("+919876543210", "Test Emergency Alert")
+                self.assertFalse(res["ok"])
+                self.assertEqual(res["status"], "failed")
+                self.assertIn("Network unreachable", res["error"])
 
 
 if __name__ == "__main__":

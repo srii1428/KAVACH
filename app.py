@@ -9,6 +9,7 @@ import base64
 import os
 import json
 from collections import defaultdict
+import concurrent.futures
 
 import contextlib
 
@@ -155,7 +156,8 @@ def init_db():
         for col, col_type, default in [
             ("trigger_type", "TEXT", "'MANUAL'"),
             ("is_silent", "INTEGER", "0"),
-            ("ended_at", "TEXT", "NULL")
+            ("ended_at", "TEXT", "NULL"),
+            ("last_dispatch_time", "TEXT", "NULL")
         ]:
             try:
                 conn.execute(f"ALTER TABLE emergencies ADD COLUMN {col} {col_type} DEFAULT {default}")
@@ -199,6 +201,42 @@ def clean_phone(phone_str):
         return ""
     return phone_str
 
+def normalize_and_route_contact(phone_str, default_country="+91"):
+    """
+    Route and normalize phone string.
+    - If digits <= 5: HELPLINE (e.g. 112, 100, 1091)
+    - If cellular: normalize to E.164 (e.g. +919876543210)
+    - If invalid: mark as INVALID with reason
+    """
+    raw = str(phone_str or "").strip()
+    clean = re.sub(r"[^\d+]", "", raw)
+    digits = re.sub(r"\D", "", clean)
+
+    if not digits:
+        return {"route": "INVALID", "phone": raw, "error": "Empty or non-numeric phone number"}
+
+    if len(digits) <= 5:
+        return {"route": "HELPLINE", "phone": digits, "error": None}
+
+    # International number starting with +
+    if clean.startswith("+"):
+        if 10 <= len(digits) <= 15:
+            return {"route": "CELLULAR", "phone": clean, "error": None}
+        return {"route": "INVALID", "phone": raw, "error": "Invalid international phone number length"}
+
+    # Leading zero e.g. 09876543210
+    if digits.startswith("0") and len(digits) == 11:
+        return {"route": "CELLULAR", "phone": f"{default_country}{digits[1:]}", "error": None}
+
+    # Standard 10-digit mobile number
+    if len(digits) == 10:
+        return {"route": "CELLULAR", "phone": f"{default_country}{digits}", "error": None}
+
+    if 10 <= len(digits) <= 15:
+        return {"route": "CELLULAR", "phone": f"+{digits}", "error": None}
+
+    return {"route": "INVALID", "phone": raw, "error": "Invalid phone number length"}
+
 def validate_coordinates(lat, lon):
     """Safely validate latitude (-90 to 90) and longitude (-180 to 180)."""
     try:
@@ -229,33 +267,73 @@ def generate_sms_message(lat=None, lon=None, trigger_type="MANUAL"):
         f"Please verify my safety or call 112."
     )
 
-def send_gateway_sms(to_phone, message):
+def send_twilio_sms(to_phone, message):
     """
-    Optional automated server-side SMS dispatch via Twilio if configured,
-    with automatic fallback to client-side native SMS.
+    Automated server-side cellular SMS dispatch via Twilio REST API.
+    Operates in simulation mode if credentials are not configured.
     """
     twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
     twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
     twilio_from = os.getenv("TWILIO_PHONE_NUMBER")
-    
-    if twilio_sid and twilio_token and twilio_from:
-        try:
-            auth_str = f"{twilio_sid}:{twilio_token}"
-            auth_b64 = base64.b64encode(auth_str.encode()).decode()
-            url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json"
-            data = urllib.parse.urlencode({
-                "To": to_phone if to_phone.startswith("+") else ("+91" + to_phone.lstrip("0")),
-                "From": twilio_from,
-                "Body": message
-            }).encode()
-            req = urllib.request.Request(url, data=data, headers={"Authorization": f"Basic {auth_b64}"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status in (200, 201):
-                    return {"sent": True, "provider": "Twilio"}
-        except Exception as e:
-            print("Twilio gateway error:", e)
 
-    return {"sent": False, "provider": "Native SMS"}
+    if not (twilio_sid and twilio_token and twilio_from):
+        return {
+            "ok": True,
+            "status": "simulated",
+            "sid": None,
+            "error": None,
+            "provider": "Simulated"
+        }
+
+    try:
+        auth_str = f"{twilio_sid}:{twilio_token}"
+        auth_b64 = base64.b64encode(auth_str.encode()).decode()
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json"
+        data = urllib.parse.urlencode({
+            "To": to_phone,
+            "From": twilio_from,
+            "Body": message
+        }).encode()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Basic {auth_b64}",
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            resp_data = json.loads(resp.read().decode())
+            status = resp_data.get("status", "sent")
+            sid = resp_data.get("sid")
+            return {
+                "ok": True,
+                "status": status,
+                "sid": sid,
+                "error": None,
+                "provider": "Twilio"
+            }
+    except urllib.error.HTTPError as http_err:
+        err_body = http_err.read().decode() if hasattr(http_err, "read") else str(http_err)
+        return {
+            "ok": False,
+            "status": "failed",
+            "sid": None,
+            "error": f"Twilio HTTP {http_err.code}: {err_body}",
+            "provider": "Twilio"
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": "failed",
+            "sid": None,
+            "error": str(e),
+            "provider": "Twilio"
+        }
+
+def send_gateway_sms(to_phone, message):
+    res = send_twilio_sms(to_phone, message)
+    return {"sent": res["ok"] and res["status"] in ("sent", "queued"), "provider": res["provider"]}
 
 @app.route("/")
 @app.route("/index.html")
@@ -292,8 +370,8 @@ def get_config():
     if request.method == "OPTIONS":
         return jsonify(ok=True), 200
     return jsonify({
-        "supabase_url": os.getenv("SUPABASE_URL", ""),
-        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY", "")
+        "supabase_url": os.getenv("SUPABASE_URL") or "https://lkqvuzbwttrnmixoxnio.supabase.co",
+        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY") or "sb_publishable_iV9d65LxMfUfPB_Pk0h_xw_8DXsO-Ug"
     })
 
 @app.route("/api/contacts", methods=["GET", "POST", "OPTIONS"])
@@ -389,18 +467,36 @@ def start_sos():
             "SELECT * FROM emergencies WHERE status='ACTIVE' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         
+        is_cooldown = False
         if active:
-            emergency_id = active["id"]
+            active_dict = dict(active)
+            emergency_id = active_dict["id"]
+            last_dispatch_str = active_dict.get("last_dispatch_time") or active_dict.get("created_at")
+            if last_dispatch_str:
+                try:
+                    last_dt = datetime.fromisoformat(last_dispatch_str)
+                    now_dt = datetime.now(timezone.utc) if last_dt.tzinfo else datetime.now()
+                    diff_seconds = abs((now_dt - last_dt).total_seconds())
+                    if diff_seconds < 30.0:
+                        is_cooldown = True
+                except Exception:
+                    pass
+
             if lat is not None and lon is not None:
                 conn.execute(
                     "UPDATE emergencies SET latitude=?, longitude=?, location_time=?, is_silent=? WHERE id=?",
                     (lat, lon, now_utc, is_silent, emergency_id)
                 )
+            if not is_cooldown:
+                conn.execute(
+                    "UPDATE emergencies SET last_dispatch_time=? WHERE id=?",
+                    (now_utc, emergency_id)
+                )
         else:
             cur = conn.execute("""
-                INSERT INTO emergencies(status, latitude, longitude, location_time, trigger_type, is_silent, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, ("ACTIVE", lat, lon, now_utc if lat is not None else None, trigger_type, is_silent, now_utc))
+                INSERT INTO emergencies(status, latitude, longitude, location_time, trigger_type, is_silent, created_at, last_dispatch_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, ("ACTIVE", lat, lon, now_utc if lat is not None else None, trigger_type, is_silent, now_utc, now_utc))
             emergency_id = cur.lastrowid
 
         # Cancel any active safety timer when SOS is triggered
@@ -410,30 +506,86 @@ def start_sos():
         else:
             contacts = [dict(c) for c in conn.execute("SELECT * FROM contacts").fetchall()]
 
-    # 2. Outside DB lock: prepare messages and invoke SMS gateway without blocking SQLite
+    # 2. Outside DB lock: prepare messages and invoke SMS gateway concurrently
     alert_msg = generate_sms_message(lat, lon, trigger_type)
     encoded_msg = urllib.parse.quote(alert_msg)
     
+    # Pre-route and collect cellular contacts for concurrent dispatch
+    cellular_to_dispatch = []
+    contact_routes = []
+    for c in contacts:
+        route_info = normalize_and_route_contact(c["phone"])
+        contact_routes.append((c, route_info))
+        if route_info["route"] == "CELLULAR" and not is_cooldown:
+            cellular_to_dispatch.append(route_info["phone"])
+
+    # Concurrently execute Twilio dispatches
+    twilio_results = {}
+    if cellular_to_dispatch:
+        max_workers = min(5, len(cellular_to_dispatch))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_phone = {
+                executor.submit(send_twilio_sms, phone, alert_msg): phone
+                for phone in cellular_to_dispatch
+            }
+            for future in concurrent.futures.as_completed(future_to_phone):
+                phone = future_to_phone[future]
+                try:
+                    twilio_results[phone] = future.result()
+                except Exception as ex:
+                    twilio_results[phone] = {
+                        "ok": False,
+                        "status": "failed",
+                        "sid": None,
+                        "error": str(ex),
+                        "provider": "Twilio"
+                    }
+
     dispatches = []
     log_rows = []
-    for contact in contacts:
-        c_phone = clean_phone(contact["phone"])
-        digits = re.sub(r"\D", "", c_phone)
-        dial_phone = ("91" + digits) if len(digits) == 10 else digits
+    for contact, route_info in contact_routes:
+        norm_phone = route_info["phone"]
+        fallback_sms_url = f"sms:{norm_phone}?body={encoded_msg}"
+        call_url = f"tel:{norm_phone}"
         
-        # WhatsApp primary URL (works on both mobile app and web.whatsapp.com)
-        wa_url = f"https://api.whatsapp.com/send?phone={dial_phone}&text={encoded_msg}"
-        sms_url = f"sms:{c_phone}?body={encoded_msg}"
-        
-        log_rows.append((emergency_id, contact["name"], contact["phone"], alert_msg, "WhatsApp", "READY (1-Tap WhatsApp)", now_local))
+        if route_info["route"] == "HELPLINE":
+            status = "helpline_speed_dial"
+            channel = "CALL"
+            sid = None
+            err = None
+        elif route_info["route"] == "INVALID":
+            status = "invalid_phone"
+            channel = "SMS"
+            sid = None
+            err = route_info.get("error")
+        else:  # CELLULAR
+            channel = "SMS"
+            if is_cooldown:
+                status = "cooldown_suppressed"
+                sid = None
+                err = None
+            else:
+                res = twilio_results.get(norm_phone, {"ok": False, "status": "failed", "error": "Dispatch error"})
+                status = res.get("status", "sent")
+                sid = res.get("sid")
+                err = res.get("error")
+
+        log_rows.append((emergency_id, contact["name"], norm_phone, alert_msg, channel, status, now_local))
         dispatches.append({
+            "contact_name": contact["name"],
+            "contact_phone": norm_phone,
             "name": contact["name"],
-            "phone": contact["phone"],
-            "whatsapp_url": wa_url,
-            "sms_url": sms_url,
-            "call_url": f"tel:{contact['phone']}",
-            "sms_body": alert_msg,
-            "gateway_sent": False
+            "phone": norm_phone,
+            "channel": channel,
+            "status": status,
+            "sid": sid,
+            "error": err,
+            "fallback_sms_url": fallback_sms_url,
+            "sms_url": fallback_sms_url,
+            "whatsapp_url": f"https://api.whatsapp.com/send?phone={norm_phone.replace('+', '')}&text={encoded_msg}",
+            "call_url": call_url,
+            "message": alert_msg,
+            "sms_body": alert_msg
         })
 
     # 3. Fast batch insert of logs in a quick secondary transaction
@@ -452,7 +604,7 @@ def start_sos():
         longitude=lon,
         trigger_type=trigger_type,
         is_silent=bool(is_silent),
-        message=f"🚨 SOS ACTIVE! Emergency SMS prepared for {len(dispatches)} trusted contacts.",
+        message=f"🚨 SOS ACTIVE! Emergency SMS processed for {len(dispatches)} contacts.",
         dispatches=dispatches,
         alert_text=alert_msg
     )

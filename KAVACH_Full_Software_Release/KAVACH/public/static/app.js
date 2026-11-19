@@ -455,22 +455,43 @@ function renderAlertDispatches(dispatches) {
     item.className = "dispatch-item";
     
     // Format device-compatible SMS link
-    const safeName = escapeHTML(d.name);
-    const safePhone = escapeHTML(d.phone);
-    const safeCallUrl = escapeHTML(d.call_url);
-    const safeWaUrl = escapeHTML(d.whatsapp_url);
-    const encodedBody = encodeURIComponent(d.sms_body || "");
-    const smsLink = isIOS ? `sms:${encodeURIComponent(d.phone)}&body=${encodedBody}` : `sms:${encodeURIComponent(d.phone)}?body=${encodedBody}`;
+    const safeName = escapeHTML(d.contact_name || d.name || "Contact");
+    const safePhone = escapeHTML(d.contact_phone || d.phone || "");
+    const safeCallUrl = escapeHTML(d.call_url || `tel:${safePhone}`);
+    const encodedBody = encodeURIComponent(d.message || d.sms_body || "");
+    const fallbackSmsUrl = d.fallback_sms_url || (isIOS ? `sms:${encodeURIComponent(safePhone)}&body=${encodedBody}` : `sms:${encodeURIComponent(safePhone)}?body=${encodedBody}`);
+    
+    let statusBadgeHtml = '';
+    let actionButtonsHtml = '';
+
+    if (d.status === "sent" || d.status === "queued") {
+      statusBadgeHtml = `<span class="dispatch-badge badge-sent">📨 SMS Sent via Twilio</span>`;
+    } else if (d.status === "simulated") {
+      statusBadgeHtml = `<span class="dispatch-badge badge-simulated">🧪 SMS Simulated (Dev Mode)</span>`;
+    } else if (d.status === "helpline_speed_dial") {
+      statusBadgeHtml = `<span class="dispatch-badge badge-helpline">🚨 Emergency Helpline</span>`;
+    } else if (d.status === "cooldown_suppressed") {
+      statusBadgeHtml = `<span class="dispatch-badge badge-cooldown">⏱️ Alert Already Active</span>`;
+    } else {
+      statusBadgeHtml = `<span class="dispatch-badge badge-failed">⚠️ Delivery Issue</span>`;
+    }
+
+    if (d.status === "helpline_speed_dial") {
+      actionButtonsHtml = `<a href="${safeCallUrl}" class="dispatch-btn call-btn" style="background:#ef4444;color:#fff;">📞 Speed Dial ${safePhone}</a>`;
+    } else {
+      actionButtonsHtml = `
+        <a href="${safeCallUrl}" class="dispatch-btn call-btn">📞 Call</a>
+        <a href="${escapeHTML(fallbackSmsUrl)}" class="dispatch-btn fallback-sms-btn" title="Send SMS Backup">💬 1-Tap SMS Fallback</a>
+      `;
+    }
     
     item.innerHTML = `
       <div class="dispatch-info">
         <strong>To: ${safeName} (${safePhone})</strong>
-        <small style="color:#25D366;font-weight:600;">💬 WhatsApp Distress Ready · 1-Tap to Send</small>
+        <div style="margin-top: 4px;">${statusBadgeHtml}</div>
       </div>
       <div class="dispatch-links">
-        <a href="${safeWaUrl}" target="_blank" class="dispatch-btn wa-btn" style="background:#25D366;color:#ffffff;font-weight:700;display:inline-flex;align-items:center;gap:6px;border:none;">💬 Send WhatsApp</a>
-        <a href="${safeCallUrl}" class="dispatch-btn call-btn">📞 Call</a>
-        <a href="${smsLink}" class="dispatch-btn sms-btn" title="Send SMS Backup">✉️ SMS</a>
+        ${actionButtonsHtml}
       </div>
     `;
     alertDispatchList.appendChild(item);
@@ -479,12 +500,7 @@ function renderAlertDispatches(dispatches) {
 
 function activateEmergencyUI(data = {}, isSilent = false) {
   isEmergencyActive = true;
-  // Automatically open first contact's WhatsApp in new tab for instant dispatch
-  if (data && data.dispatches && data.dispatches.length > 0 && data.dispatches[0].whatsapp_url) {
-    try {
-      window.open(data.dispatches[0].whatsapp_url, '_blank');
-    } catch (_) {}
-  }
+  // Silent background cellular SMS dispatch (no popup tabs)
   document.body.classList.add("emergency-active");
   document.body.dataset.status = "ACTIVE";
 
@@ -1205,7 +1221,7 @@ function renderContactsList(contacts) {
         <small>${safePhone}</small>
       </div>
       <div class="contact-actions">
-        <a href="https://api.whatsapp.com/send?phone=${encodeURIComponent(waPhone)}&text=Hello%20${encodeURIComponent(c.name)},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." target="_blank" class="action-btn wa-action" title="WhatsApp ${safeName}" style="color:#25D366;">💬</a>
+        <a href="sms:${encodeURIComponent(c.phone)}?body=Hello%20${encodeURIComponent(c.name)},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." class="action-btn sms-action" title="SMS ${safeName}" style="color:#0284c7;">✉️</a>
         <a href="tel:${encodeURIComponent(c.phone)}" class="action-btn call-action" title="Call ${safeName}">📞</a>
         <button class="remove" aria-label="Remove ${safeName}" title="Delete Contact">×</button>
       </div>

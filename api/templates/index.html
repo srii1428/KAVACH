@@ -1895,13 +1895,13 @@ footer {
         <article class="card dispatch-card">
           <div class="card-heading">
             <div>
-              <p class="eyebrow">WHATSAPP & EMERGENCY DISPATCH</p>
-              <h2>Emergency WhatsApp Broadcast</h2>
+              <p class="eyebrow">CELLULAR SMS & EMERGENCY DISPATCH</p>
+              <h2>Emergency SMS Broadcast Hub</h2>
             </div>
-            <span class="pill light" id="dispatchPill" style="background:rgba(37,211,102,0.15);color:#25D366;border-color:rgba(37,211,102,0.4);">WHATSAPP READY</span>
+            <span class="pill light" id="dispatchPill" style="background:rgba(56,189,248,0.15);color:#0284c7;border-color:rgba(56,189,248,0.4);">SMS BROADCAST READY</span>
           </div>
           
-          <p class="muted">When triggered, instant WhatsApp distress messages with your exact Google Maps pin are prepared for 1-tap transmission to your trusted contacts:</p>
+          <p class="muted">When triggered, instant cellular SMS distress messages with your exact Google Maps pin are automatically broadcast to your trusted contacts:</p>
           
           <div class="alert-dispatch-list" id="alertDispatchList">
             {% if alerts %}
@@ -1909,19 +1909,31 @@ footer {
                 <div class="dispatch-item">
                   <div class="dispatch-info">
                     <strong>To: {{ a.contact_name }} ({{ a.contact_phone }})</strong>
-                    <small>{{ a.timestamp }} · Channel: {{ a.channel }} · Status: {{ a.status }}</small>
+                    <div style="margin-top: 4px;">
+                      {% if a.status in ['sent', 'queued'] %}
+                        <span class="dispatch-badge badge-sent">📨 SMS Sent via Twilio</span>
+                      {% elif a.status == 'simulated' %}
+                        <span class="dispatch-badge badge-simulated">🧪 SMS Simulated (Dev Mode)</span>
+                      {% elif a.status == 'helpline_speed_dial' %}
+                        <span class="dispatch-badge badge-helpline">🚨 Emergency Helpline</span>
+                      {% elif a.status == 'cooldown_suppressed' %}
+                        <span class="dispatch-badge badge-cooldown">⏱️ Alert Already Active</span>
+                      {% else %}
+                        <span class="dispatch-badge badge-failed">⚠️ Delivery Issue</span>
+                      {% endif %}
+                      <small style="margin-left: 6px;">{{ a.timestamp }}</small>
+                    </div>
                   </div>
                   <div class="dispatch-links">
-                    <a href="https://api.whatsapp.com/send?phone={{ a.contact_phone }}&text={{ a.message|urlencode }}" target="_blank" class="dispatch-btn wa-btn" style="background:#25D366;color:#ffffff;font-weight:700;">💬 Send WhatsApp</a>
                     <a href="tel:{{ a.contact_phone }}" class="dispatch-btn call-btn">📞 Call</a>
-                    <a href="sms:{{ a.contact_phone }}?body={{ a.message|urlencode }}" class="dispatch-btn sms-btn">✉️ SMS</a>
+                    <a href="sms:{{ a.contact_phone }}?body={{ a.message|urlencode }}" class="dispatch-btn fallback-sms-btn" title="Send SMS Backup">💬 1-Tap SMS Fallback</a>
                   </div>
                 </div>
               {% endfor %}
             {% else %}
               <div class="empty-dispatch" id="emptyDispatch">
-                <span>💬</span>
-                <p>No active alerts right now. Pressing SOS prepares immediate 1-click WhatsApp and direct phone call dispatches for every trusted contact.</p>
+                <span>📨</span>
+                <p>No active alerts right now. Pressing SOS triggers automatic background cellular SMS broadcasts with your live location to every trusted contact.</p>
               </div>
             {% endif %}
           </div>
@@ -2019,7 +2031,7 @@ footer {
                 <small>{{ c.phone }}</small>
               </div>
               <div class="contact-actions">
-                <a href="https://api.whatsapp.com/send?phone={{ c.phone }}&text=Hello%20{{ c.name }},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." target="_blank" class="action-btn wa-action" title="Send WhatsApp to {{ c.name }}" style="color:#25D366;">💬</a>
+                <a href="sms:{{ c.phone }}?body=Hello%20{{ c.name|urlencode }},%20this%20is%20my%20KAVACH%20trusted%20contact%20test." class="action-btn sms-action" title="Send SMS to {{ c.name }}" style="color:#0284c7;">✉️</a>
                 <a href="tel:{{ c.phone }}" class="action-btn call-action" title="Call {{ c.name }}">📞</a>
                 <button class="remove" aria-label="Remove {{ c.name }}" title="Delete Contact">×</button>
               </div>
