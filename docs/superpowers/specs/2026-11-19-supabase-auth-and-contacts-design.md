@@ -1,0 +1,152 @@
+# Design Specification: Supabase Auth, Contacts & Incident Sync for KAVACH
+
+**Date:** 2026-11-19  
+**Status:** Approved for Implementation Planning  
+**Target Platform:** KAVACH Women's Safety Platform (Vercel Serverless + Flask / Supabase)
+
+---
+
+## 1. Intent & Problem Statement
+
+### 1.1 The Problem
+Currently, KAVACH stores trusted emergency contacts and incident records in a local SQLite database (`/tmp/kavach.db` on Vercel). Because serverless instances are ephemeral and frequently recycled:
+1. User-added contacts and incident histories vanish unpredictably when containers restart.
+2. There is no user isolation: multiple concurrent users on the same instance can see or poll the same emergency records.
+3. Users cannot log into their account from another browser or mobile device to access their saved trusted circle.
+
+### 1.2 The Intent
+Integrate **Supabase Authentication** (Email & Password / Magic Link) and **Supabase PostgreSQL** with **Row-Level Security (RLS)** so that:
+- Users have personal accounts securely managed by Supabase.
+- Each user's trusted contacts and emergency incident logs are stored permanently in the cloud, isolated to their `auth.uid()`.
+- Contacts and incident reports persist across devices, browsers, and Vercel container recycles.
+- **Life-Safety Invariant (Emergency-First):** Panic SOS, siren, live GPS tracking, and national helplines remain 100% operational immediately without any login barrier.
+
+---
+
+## 2. Goals, Non-Goals, and Anti-Goals
+
+### 2.1 Goals
+- **User Authentication:** Allow users to register, log in, view current session status, and log out using Supabase Auth.
+- **Cloud Contacts & Incidents with RLS:** Store contacts and past incident records in Supabase PostgreSQL tables where each row is strictly owned by `user_id = auth.uid()`.
+- **Hybrid Guest & Account Flow:**
+  - Authenticated users automatically fetch and persist contacts to Supabase.
+  - Guest users can still add local contacts (persisted in browser `localStorage`), with an invitation to sign in to sync across devices.
+- **Zero-Latency Emergency SOS:**
+  - When SOS triggers, the browser provides its cached contact list directly in the payload so the panic broadcast never waits on a remote database query or token validation.
+- **Responsive Auth Modal:** Integrated modal adhering to KAVACH's dark theme palette (`#4b104f`, `#ed2f79`, `#12121a`).
+
+### 2.2 Non-Goals
+- Social OAuth providers (Google, Apple) in this milestone (can be enabled in the Supabase dashboard later without schema changes).
+- Multi-user contact sharing or public social feeds.
+- Storing raw audio recording blobs in cloud storage in this phase (remains local downloadable evidence).
+
+### 2.3 Anti-Goals
+- **NEVER gate SOS functionality behind authentication.** No user must ever be blocked from triggering an emergency alert because they are logged out or their token expired.
+- **NEVER expose one user's contacts or incidents to another user.** Enforce PostgreSQL Row-Level Security at the database layer.
+
+---
+
+## 3. Approaches Considered & Selected
+
+### Approach 1 (Selected): Emergency-First with Account Cloud Sync
+- **Description:** Unauthenticated guest users have immediate full access to emergency tools and local contacts. Clicking "Sign In / Account" opens a modal. Once authenticated, contacts and incidents sync with Supabase PostgreSQL under their `user_id`. Local caching ensures emergency readiness at all times.
+- **Why Chosen:** Balances multi-device cloud persistence with the core life-safety mission of KAVACH: emergency response must never be blocked by authentication friction.
+
+### Approach 2 (Rejected): Mandatory Authentication Gate
+- **Description:** Require users to log in before viewing or using KAVACH.
+- **Why Rejected:** In an acute crisis (being followed, attacked), a login wall or expired session could prove fatal.
+
+---
+
+## 4. Architecture & Technical Design
+
+### 4.1 System Components
+1. **Frontend (Browser Client):**
+   - `@supabase/supabase-js` v2 loaded via official CDN bundle (`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2`).
+   - Initialized with project public config: `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+   - Listens to auth state changes (`onAuthStateChange`):
+     - Logged in: Displays user email and Sign Out button; queries Supabase `public.contacts` and `public.incidents` using RLS.
+     - Guest: Uses local storage with sign-in prompt.
+2. **Backend (Flask / Vercel API):**
+   - Serves static assets, HTML templates, and handles `/api/sos` dispatch formatting.
+   - Accepts client-supplied contact lists in `/api/sos` for 0ms dispatch latency.
+3. **Database (Supabase PostgreSQL):**
+   - Hosted Postgres instance.
+   - Row-Level Security enabled on `public.contacts` and `public.incidents`.
+
+### 4.2 Database Schema & Security Policies
+
+```sql
+-- 1. Create contacts table
+create table if not exists public.contacts (
+  id bigint generated by default as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  name text not null,
+  phone text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.contacts enable row level security;
+
+create policy "Users can view own contacts"
+  on public.contacts for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert own contacts"
+  on public.contacts for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete own contacts"
+  on public.contacts for delete
+  using (auth.uid() = user_id);
+
+-- 2. Create incidents table
+create table if not exists public.incidents (
+  id bigint generated by default as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  status text not null default 'CLOSED',
+  latitude real,
+  longitude real,
+  trigger_type text default 'MANUAL',
+  summary text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.incidents enable row level security;
+
+create policy "Users can view own incidents"
+  on public.incidents for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert own incidents"
+  on public.incidents for insert
+  with check (auth.uid() = user_id);
+```
+
+### 4.3 User Interface Specifications
+- **Header Action:**
+  - Logged Out: Displays `[ 🔑 Sign In ]` button in the top navigation bar.
+  - Logged In: Displays user email pill (e.g. `👤 priya@example.com [Sign Out]`).
+- **Auth Modal:**
+  - Sleek modal with two tabs: `Sign In` and `Sign Up`.
+  - Fields: Email address, Password.
+  - Inline error feedback and loading state.
+  - Dismissible (ESC key, backdrop click, or close button).
+- **Contacts Card:**
+  - Shows cloud sync indicator (e.g. `☁️ Cloud Synced` when logged in, or `💾 Guest Mode (Local)` when logged out).
+  - Adding a contact directly writes to Supabase table when logged in and updates UI immediately.
+  - Deleting a contact removes it from Supabase and updates UI.
+
+---
+
+## 5. Security & Privacy Considerations
+1. **Anon Key Safety:** Supabase `anon` public key is designed specifically for browser use and safe for client exposure because all data access is guarded by Postgres RLS.
+2. **Row-Level Security:** Direct database requests verify the JWT passed by Supabase client; queries cannot view or alter other users' contacts or incident records.
+3. **Emergency Local Cache:** Even if offline or during a network drop, cached contacts stored in `localStorage` are used to populate WhatsApp and phone dialers immediately.
+
+---
+
+## 6. What's Left to the Builder
+- Visual styling adjustments to the Auth Modal to blend with existing CSS design tokens.
+- Providing the user with the SQL snippet to paste into their Supabase SQL editor.
+- Automatic migration of local contacts to Supabase upon first sign-in.
