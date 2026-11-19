@@ -371,9 +371,9 @@ def get_config():
         return jsonify(ok=True), 200
     url = os.getenv("SUPABASE_URL", "")
     anon_key = os.getenv("SUPABASE_ANON_KEY", "")
-    if not url or "qvpmhhecmdlqnlglzhta" in url:
+    if not url or "qvpmhhecmdlqnlglzhta" in url or "lkqvuzbwttrnmixoxnio" not in url:
         url = "https://lkqvuzbwttrnmixoxnio.supabase.co"
-    if not anon_key or "qvpmhhecmdlqnlglzhta" in anon_key:
+    if not anon_key or "InF2cG1oaGVjbWRscW5sZ2x6aHRhIi" in anon_key or "qvpmhhecmdlqnlglzhta" in anon_key or anon_key.startswith("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2cG1oaGVjbWRscW5sZ2x6aHRh"):
         anon_key = "sb_publishable_iV9d65LxMfUfPB_Pk0h_xw_8DXsO-Ug"
     return jsonify({
         "supabase_url": url,
