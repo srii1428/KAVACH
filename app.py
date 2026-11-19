@@ -287,6 +287,15 @@ def home():
         active_timer=timer_dict
     )
 
+@app.route("/api/config", methods=["GET", "OPTIONS"])
+def get_config():
+    if request.method == "OPTIONS":
+        return jsonify(ok=True), 200
+    return jsonify({
+        "supabase_url": os.getenv("SUPABASE_URL", ""),
+        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY", "")
+    })
+
 @app.route("/api/contacts", methods=["GET", "POST", "OPTIONS"])
 def handle_contacts():
     if request.method == "OPTIONS":

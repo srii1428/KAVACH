@@ -180,6 +180,13 @@ class KavachApiTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(incidents), 1)
         self.assertEqual(incidents[0]["status"], "CLOSED")
 
+    def test_config_endpoint(self):
+        resp = self.client.get("/api/config")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn("supabase_url", data)
+        self.assertIn("supabase_anon_key", data)
+
     def test_static_assets_and_page_render(self):
         # 1. Test index page renders with embedded stylesheet across all aliases
         for path in ["/", "/api/index", "/index.html"]:
