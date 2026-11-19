@@ -369,9 +369,15 @@ def home():
 def get_config():
     if request.method == "OPTIONS":
         return jsonify(ok=True), 200
+    url = os.getenv("SUPABASE_URL", "")
+    anon_key = os.getenv("SUPABASE_ANON_KEY", "")
+    if not url or "qvpmhhecmdlqnlglzhta" in url:
+        url = "https://lkqvuzbwttrnmixoxnio.supabase.co"
+    if not anon_key or "qvpmhhecmdlqnlglzhta" in anon_key:
+        anon_key = "sb_publishable_iV9d65LxMfUfPB_Pk0h_xw_8DXsO-Ug"
     return jsonify({
-        "supabase_url": os.getenv("SUPABASE_URL") or "https://lkqvuzbwttrnmixoxnio.supabase.co",
-        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY") or "sb_publishable_iV9d65LxMfUfPB_Pk0h_xw_8DXsO-Ug"
+        "supabase_url": url,
+        "supabase_anon_key": anon_key
     })
 
 @app.route("/api/contacts", methods=["GET", "POST", "OPTIONS"])
