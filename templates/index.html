@@ -1926,7 +1926,9 @@ footer {
                   </div>
                   <div class="dispatch-links">
                     <a href="tel:{{ a.contact_phone }}" class="dispatch-btn call-btn">📞 Call</a>
+                    {% if a.status != 'helpline_speed_dial' %}
                     <a href="sms:{{ a.contact_phone }}?body={{ a.message|urlencode }}" class="dispatch-btn fallback-sms-btn" title="Send SMS Backup">💬 1-Tap SMS Fallback</a>
+                    {% endif %}
                   </div>
                 </div>
               {% endfor %}

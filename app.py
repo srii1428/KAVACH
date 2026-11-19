@@ -197,17 +197,22 @@ def clean_phone(phone_str):
     """Sanitize and clean phone string to numbers and leading +."""
     phone_str = re.sub(r"[^\d+]", "", phone_str or "")
     digits = re.sub(r"\D", "", phone_str)
-    if len(digits) < 5:
+    if len(digits) < 3:
         return ""
     return phone_str
 
-def normalize_and_route_contact(phone_str, default_country="+91"):
+def normalize_and_route_contact(phone_str, default_country=None):
     """
     Route and normalize phone string.
     - If digits <= 5: HELPLINE (e.g. 112, 100, 1091)
     - If cellular: normalize to E.164 (e.g. +919876543210)
     - If invalid: mark as INVALID with reason
     """
+    if default_country is None:
+        default_country = os.getenv("TWILIO_DEFAULT_COUNTRY", "+91")
+    if not default_country.startswith("+"):
+        default_country = f"+{default_country}"
+
     raw = str(phone_str or "").strip()
     clean = re.sub(r"[^\d+]", "", raw)
     digits = re.sub(r"\D", "", clean)
@@ -390,7 +395,7 @@ def handle_contacts():
         name = (data.get("name") or "").strip()
         phone = clean_phone(data.get("phone"))
         if not name or not phone:
-            return jsonify(ok=False, error="Please enter a valid name and phone number (at least 5 digits)."), 400
+            return jsonify(ok=False, error="Please enter a valid name and phone number (at least 3 digits)."), 400
         try:
             with db() as conn:
                 conn.execute("""
@@ -525,6 +530,9 @@ def start_sos():
         if route_info["route"] == "CELLULAR" and not is_cooldown:
             cellular_to_dispatch.append(route_info["phone"])
 
+    # Deduplicate phone numbers to prevent multiple dispatches to the same phone
+    cellular_to_dispatch = list(dict.fromkeys(cellular_to_dispatch))
+
     # Concurrently execute Twilio dispatches
     twilio_results = {}
     if cellular_to_dispatch:
@@ -624,17 +632,124 @@ def update_location():
     if lat is None or lon is None:
         return jsonify(ok=False, error="Valid latitude (-90 to 90) and longitude (-180 to 180) are required."), 400
     now = datetime.now(timezone.utc).isoformat()
+    now_local = datetime.now().isoformat()
+    
+    first_gps_fix = False
+    dispatches = []
     with db() as conn:
         active = conn.execute(
-            "SELECT id FROM emergencies WHERE status='ACTIVE' ORDER BY id DESC LIMIT 1"
+            "SELECT id, latitude, longitude, trigger_type FROM emergencies WHERE status='ACTIVE' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if not active:
             return jsonify(ok=False, error="No active SOS session."), 409
+        
+        active_dict = dict(active)
+        emergency_id = active_dict["id"]
+        if active_dict.get("latitude") is None:
+            first_gps_fix = True
+
         conn.execute("""
             UPDATE emergencies SET latitude=?, longitude=?, location_time=?
             WHERE id=?
-        """, (lat, lon, now, active["id"]))
-    return jsonify(ok=True, updated_at=now, latitude=lat, longitude=lon)
+        """, (lat, lon, now, emergency_id))
+        
+        if first_gps_fix:
+            contacts = [dict(c) for c in conn.execute("SELECT * FROM contacts").fetchall()]
+
+    if first_gps_fix and contacts:
+        alert_msg = generate_sms_message(lat, lon, active_dict.get("trigger_type", "MANUAL"))
+        encoded_msg = urllib.parse.quote(alert_msg)
+        
+        cellular_to_dispatch = []
+        contact_routes = []
+        for c in contacts:
+            route_info = normalize_and_route_contact(c["phone"])
+            contact_routes.append((c, route_info))
+            if route_info["route"] == "CELLULAR":
+                cellular_to_dispatch.append(route_info["phone"])
+
+        cellular_to_dispatch = list(dict.fromkeys(cellular_to_dispatch))
+
+        twilio_results = {}
+        if cellular_to_dispatch:
+            max_workers = min(5, len(cellular_to_dispatch))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_phone = {
+                    executor.submit(send_twilio_sms, phone, alert_msg): phone
+                    for phone in cellular_to_dispatch
+                }
+                for future in concurrent.futures.as_completed(future_to_phone):
+                    phone = future_to_phone[future]
+                    try:
+                        twilio_results[phone] = future.result()
+                    except Exception as ex:
+                        twilio_results[phone] = {
+                            "ok": False,
+                            "status": "failed",
+                            "sid": None,
+                            "error": str(ex),
+                            "provider": "Twilio"
+                        }
+
+        log_rows = []
+        for contact, route_info in contact_routes:
+            norm_phone = route_info["phone"]
+            fallback_sms_url = f"sms:{norm_phone}?body={encoded_msg}"
+            call_url = f"tel:{norm_phone}"
+            
+            if route_info["route"] == "HELPLINE":
+                status = "helpline_speed_dial"
+                channel = "CALL"
+                sid = None
+                err = None
+            elif route_info["route"] == "INVALID":
+                status = "invalid_phone"
+                channel = "SMS"
+                sid = None
+                err = route_info.get("error")
+            else:
+                channel = "SMS"
+                res = twilio_results.get(norm_phone, {"ok": False, "status": "failed", "error": "Dispatch error"})
+                status = res.get("status", "sent")
+                sid = res.get("sid")
+                err = res.get("error")
+
+            log_rows.append((emergency_id, contact["name"], norm_phone, alert_msg, channel, status, now_local))
+            dispatches.append({
+                "contact_name": contact["name"],
+                "contact_phone": norm_phone,
+                "name": contact["name"],
+                "phone": norm_phone,
+                "channel": channel,
+                "status": status,
+                "sid": sid,
+                "error": err,
+                "fallback_sms_url": fallback_sms_url,
+                "sms_url": fallback_sms_url,
+                "whatsapp_url": f"https://api.whatsapp.com/send?phone={norm_phone.replace('+', '')}&text={encoded_msg}",
+                "call_url": call_url,
+                "message": alert_msg,
+                "sms_body": alert_msg
+            })
+
+        if log_rows:
+            with db() as conn:
+                conn.executemany("""
+                    INSERT INTO alert_logs(emergency_id, contact_name, contact_phone, message, channel, status, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, log_rows)
+
+    resp = {
+        "ok": True,
+        "updated_at": now,
+        "latitude": lat,
+        "longitude": lon
+    }
+    if first_gps_fix:
+        resp["first_gps_fix"] = True
+        resp["dispatches"] = dispatches
+
+    return jsonify(resp)
 
 @app.route("/api/stop", methods=["GET", "POST", "OPTIONS"])
 def stop_sos():

@@ -35,10 +35,11 @@ class KavachApiTestCase(unittest.TestCase):
     def test_phone_sanitization_and_validation(self):
         self.assertEqual(clean_phone("+91 98765 43210"), "+919876543210")
         self.assertEqual(clean_phone("9876543210"), "9876543210")
-        # Reject invalid short/empty phone numbers
+        # Reject invalid short/empty phone numbers (less than 3 digits)
         self.assertEqual(clean_phone("+"), "")
-        self.assertEqual(clean_phone("123"), "")
+        self.assertEqual(clean_phone("12"), "")
         self.assertEqual(clean_phone("abc"), "")
+        self.assertEqual(clean_phone("112"), "112")
 
     def test_normalize_and_route_contact(self):
         # Short-code helplines
@@ -341,6 +342,52 @@ class KavachApiTestCase(unittest.TestCase):
                 self.assertFalse(res["ok"])
                 self.assertEqual(res["status"], "failed")
                 self.assertIn("Network unreachable", res["error"])
+
+    def test_add_helpline_contact_succeeds(self):
+        resp = self.client.post("/api/contacts", json={"name": "Police Helpline", "phone": "112"})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["phone"], "112")
+
+    def test_twilio_default_country_env_var(self):
+        import unittest.mock as mock
+        with mock.patch.dict(os.environ, {"TWILIO_DEFAULT_COUNTRY": "+1"}):
+            res = app.normalize_and_route_contact("5551234567")
+            self.assertEqual(res["route"], "CELLULAR")
+            self.assertEqual(res["phone"], "+15551234567")
+
+    def test_initial_gps_fix_triggers_location_dispatch(self):
+        # 1. Add contact
+        self.client.post("/api/contacts", json={"name": "Family", "phone": "9876543210"})
+        # 2. Trigger SOS with no coordinates (GPS acquiring)
+        sos_res = self.client.post("/api/sos", json={})
+        self.assertEqual(sos_res.status_code, 200)
+        # 3. Stream first GPS location fix
+        loc_res = self.client.post("/api/location", json={"latitude": 12.9716, "longitude": 77.5946})
+        self.assertEqual(loc_res.status_code, 200)
+        loc_data = loc_res.get_json()
+        self.assertTrue(loc_data["ok"])
+        self.assertIn("dispatches", loc_data)
+        self.assertEqual(len(loc_data["dispatches"]), 1)
+        self.assertEqual(loc_data["dispatches"][0]["status"], "simulated")
+        self.assertIn("12.9716", loc_data["dispatches"][0]["message"])
+
+    def test_send_twilio_sms_mock_success(self):
+        import unittest.mock as mock
+        mock_resp = mock.MagicMock()
+        mock_resp.read.return_value = json.dumps({"sid": "SMtest123", "status": "sent"}).encode()
+        mock_resp.__enter__.return_value = mock_resp
+        with mock.patch("urllib.request.urlopen", return_value=mock_resp):
+            with mock.patch.dict(os.environ, {
+                "TWILIO_ACCOUNT_SID": "test_dummy_twilio_sid",
+                "TWILIO_AUTH_TOKEN": "secret_token",
+                "TWILIO_PHONE_NUMBER": "+12055550199"
+            }):
+                res = app.send_twilio_sms("+919876543210", "Test Alert")
+                self.assertTrue(res["ok"])
+                self.assertEqual(res["status"], "sent")
+                self.assertEqual(res["sid"], "SMtest123")
 
 
 if __name__ == "__main__":
